@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Job Hunter AI - Dashboard ATS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .fit-high { color: #065f46; background-color: #d1fae5; border-color: #a7f3d0; }
+        .fit-good { color: #1e40af; background-color: #dbeafe; border-color: #bfdbfe; }
+        .fit-review { color: #92400e; background-color: #fef3c7; border-color: #fde68a; }
+        .fit-ignore { color: #991b1b; background-color: #fee2e2; border-color: #fecaca; }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans text-gray-800">
+    <header class="bg-indigo-600 text-white shadow-md py-4 px-6 flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <h1 class="text-xl font-bold tracking-tight">Job Hunter AI</h1>
+            <span class="bg-indigo-800 text-indigo-200 text-xs px-2 py-0.5 rounded font-mono font-medium">Metodologia ATS &ge; 80%</span>
+        </div>
+        <div id="gmail-status-badge" class="text-sm bg-indigo-700 px-4 py-2 rounded-lg flex items-center gap-2">
+            <span>Checando Gmail API...</span>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- COL 1: CONTROL PANEL -->
+        <div class="space-y-6">
+            <!-- GMAIL AUTH PANEL -->
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                <h2 class="text-lg font-semibold mb-3">Conexão Gmail</h2>
+                <div id="gmail-action-box" class="space-y-2">
+                    <p class="text-sm text-gray-500">Conecte sua conta via OAuth 2.0 para habilitar os disparos.</p>
+                    <button id="btn-connect-gmail" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded text-sm font-medium transition duration-200">
+                        Conectar Conta Google
+                    </button>
+                </div>
+            </div>
+
+            <!-- CURRICULO UPLOAD PANEL -->
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                <h2 class="text-lg font-semibold mb-3">Upload de Currículo</h2>
+                <form id="upload-cv-form" class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Versão / Perfil</label>
+                        <input type="text" id="cv-version" placeholder="ex: backend, cloud, frontend" class="w-full border border-gray-300 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" required>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Arquivo PDF</label>
+                        <input type="file" id="cv-file" accept=".pdf" class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                    </div>
+                    <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded text-sm font-medium transition duration-200">
+                        Processar e Configurar Perfil
+                    </button>
+                </form>
+                <div id="cv-list" class="mt-4 space-y-2 text-xs">
+                    <!-- Resumes loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- AUTO SCRAPE PANEL -->
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                <h2 class="text-lg font-semibold mb-2 font-medium">Busca Automática</h2>
+                <p class="text-xs text-gray-500 mb-3">Varre vagas no LinkedIn, Programathor e Gupy aplicando o filtro ATS &ge; 80%.</p>
+                <button id="btn-trigger-scrape" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded text-sm font-medium transition duration-200">
+                    Buscar Vagas Agora
+                </button>
+            </div>
+
+            <!-- MANUALLY ADD JOB -->
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                <h2 class="text-lg font-semibold mb-3 font-medium">Cadastrar Nova Vaga</h2>
+                <form id="add-job-form" class="space-y-3">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Título</label>
+                            <input type="text" id="job-title" placeholder="Ex: Backend Dev" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500" required>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Empresa</label>
+                            <input type="text" id="job-company" placeholder="Ex: Google" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500" required>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">URL da Vaga</label>
+                        <input type="url" id="job-url" placeholder="https://..." class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Descrição Completa</label>
+                        <textarea id="job-desc" rows="3" placeholder="Cole aqui a descrição da vaga..." class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500" required></textarea>
+                    </div>
+                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded text-xs font-medium transition duration-200">
+                        Analisar Vaga com IA
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- COL 2: VAGAS E STATUS -->
+        <div class="space-y-6">
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                <div class="flex justify-between items-center mb-3">
+                    <div>
+                        <h2 class="text-lg font-semibold">Vagas Detectadas</h2>
+                        <p id="ats-counter" class="text-xs text-emerald-700 font-medium mt-0.5">Filtrando por ATS &ge; 80%</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <label class="inline-flex items-center cursor-pointer text-xs font-medium text-gray-700">
+                            <input type="checkbox" id="toggle-ats-filter" class="sr-only peer" checked>
+                            <div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
+                            <span class="ms-2 text-xs font-semibold text-gray-600 peer-checked:text-emerald-700">&ge; 80% Match</span>
+                        </label>
+                        <button id="btn-clear-jobs" class="text-xs text-red-600 hover:text-red-800 hover:bg-red-50 px-2 py-1 rounded border border-red-200 font-medium transition" title="Limpar todas as vagas salvas">
+                            Limpar Lista
+                        </button>
+                    </div>
+                </div>
+
+                <div id="jobs-list" class="space-y-3 max-h-[75vh] overflow-y-auto">
+                    <p class="text-sm text-gray-500">Nenhuma vaga cadastrada.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- COL 3: HUMAN IN THE LOOP (APROVAÇÃO) -->
+        <div class="space-y-6">
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                <h2 class="text-lg font-semibold mb-3 border-b pb-2">Central de Aprovação ATS</h2>
+                <div id="approval-box-empty" class="text-center py-12 text-gray-400">
+                    <svg class="mx-auto h-12 w-12 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    <p class="mt-2 text-sm">Selecione uma vaga para carregar a avaliação ATS e a proposta de candidatura.</p>
+                </div>
+
+                <div id="approval-box-content" class="hidden space-y-4">
+                    <!-- Dynamic details -->
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h3 id="app-company" class="text-gray-500 text-xs font-semibold uppercase">EMPRESA</h3>
+                            <h4 id="app-title" class="text-lg font-bold text-gray-900 leading-tight">Título da Vaga</h4>
+                        </div>
+                        <span id="app-badge" class="px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider">ATS MATCH</span>
+                    </div>
+
+                    <!-- ATS SCORE PROGRESS BAR -->
+                    <div class="bg-gray-50 border border-gray-200 rounded p-3 text-xs space-y-1.5">
+                        <div class="flex justify-between items-center">
+                            <span class="font-bold text-gray-700">Probabilidade de Aceite no ATS:</span>
+                            <span id="ats-score-text" class="font-extrabold text-sm text-emerald-700">85%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div id="ats-score-bar" class="bg-emerald-600 h-2 rounded-full transition-all duration-300" style="width: 85%"></div>
+                        </div>
+                        <p id="ats-explanation" class="text-[11px] text-gray-600 italic mt-1"></p>
+                    </div>
+
+                    <!-- ATS BREAKDOWN -->
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div class="bg-emerald-50 border border-emerald-100 p-2.5 rounded">
+                            <span class="font-bold text-emerald-900 block mb-1">Requisitos Atendidos:</span>
+                            <ul id="app-strengths" class="list-disc pl-4 space-y-0.5 text-[11px] text-emerald-800">
+                                <!-- Dynamic -->
+                            </ul>
+                        </div>
+                        <div class="bg-amber-50 border border-amber-100 p-2.5 rounded">
+                            <span class="font-bold text-amber-900 block mb-1">Pontos de Atenção / Gaps:</span>
+                            <ul id="app-gaps" class="list-disc pl-4 space-y-0.5 text-[11px] text-amber-800">
+                                <!-- Dynamic -->
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- CURRICULO RECOMENDADO -->
+                    <div class="text-xs bg-indigo-50 border border-indigo-100 p-2.5 rounded text-indigo-900 flex justify-between items-center">
+                        <span class="font-semibold">Currículo Selecionado:</span>
+                        <span id="app-resume" class="font-bold font-mono bg-white px-2 py-0.5 rounded border border-indigo-200">BACKEND.PDF</span>
+                    </div>
+
+                    <!-- FORM DISPARO -->
+                    <div class="space-y-3 pt-2 border-t">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">E-mail de Destino</label>
+                            <input type="email" id="email-recipient" class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Assunto</label>
+                            <input type="text" id="email-subject" class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Corpo da Mensagem (Customizado por IA)</label>
+                            <textarea id="email-body" rows="6" class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase text-gray-500 mb-1">Notas Internas</label>
+                            <input type="text" id="app-notes" placeholder="Feedback ou observações pessoais..." class="w-full border border-gray-300 rounded px-3 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500">
+                        </div>
+
+                        <div class="flex gap-2 pt-2">
+                            <button id="btn-save-draft" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-3 rounded text-xs font-semibold transition">
+                                Salvar Rascunho
+                            </button>
+                            <button id="btn-send-email" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 rounded text-xs font-semibold shadow-sm transition">
+                                Aprovar e Disparar E-mail
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        let currentAppId = null;
+
+        // Check Gmail auth
+        async function checkGmailStatus() {
+            try {
+                const res = await fetch('/api/gmail/status');
+                const data = await res.json();
+                const badge = document.getElementById('gmail-status-badge');
+                const actionBox = document.getElementById('gmail-action-box');
+                
+                if (data.authenticated) {
+                    badge.innerHTML = `<span class="h-2 w-2 rounded-full bg-emerald-400 inline-block"></span> <span>Gmail Conectado (${data.email_address || 'Ativo'})</span>`;
+                    badge.className = "text-sm bg-indigo-800 px-4 py-2 rounded-lg flex items-center gap-2 border border-indigo-400";
+                    actionBox.innerHTML = `
+                        <p class="text-xs text-emerald-600 font-semibold">&check; Conta autenticada via OAuth 2.0.</p>
+                        <p class="text-xs text-gray-500">Disparos de e-mail habilitados.</p>
+                    `;
+                } else {
+                    badge.innerHTML = `<span class="h-2 w-2 rounded-full bg-amber-400 inline-block"></span> <span>Gmail Desconectado</span>`;
+                    badge.className = "text-sm bg-indigo-700 px-4 py-2 rounded-lg flex items-center gap-2";
+                }
+            } catch (err) {
+                console.error("Erro ao verificar Gmail status:", err);
+            }
+        }
+
+        // Connect Gmail button
+        document.getElementById('btn-connect-gmail').onclick = async () => {
+            try {
+                const res = await fetch('/api/gmail/auth-url');
+                const data = await res.json();
+                if (data.auth_url) {
+                    window.open(data.auth_url, '_blank');
+                    alert("Complete a autorização na aba do Google. Em seguida, atualize o dashboard.");
+                } else {
+                    alert("Erro ao obter URL de autenticação.");
+                }
+            } catch (err) {
+                alert("Erro ao obter URL de autenticação: " + err);
+            }
+        };
+
+        // Trigger background crawling
+        document.getElementById('btn-trigger-scrape').onclick = async () => {
+            const btn = document.getElementById('btn-trigger-scrape');
+            const orig = btn.innerText;
+            btn.innerText = "Iniciando varredura...";
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/jobs/scrape/trigger', { method: 'POST' });
+                if (res.ok) {
+                    alert("Varredura iniciada no segundo plano! As vagas encontradas e avaliadas pelo ATS serão carregadas em instantes.");
+                    let checkCount = 0;
+                    const checkInterval = setInterval(() => {
+                        fetchJobs();
+                        checkCount++;
+                        if (checkCount >= 5) clearInterval(checkInterval);
+                    }, 8000);
+                } else {
+                    const err = await res.json();
+                    alert("Erro ao disparar busca automática: " + (err.detail || "Consulte logs do backend."));
+                }
+            } catch (err) {
+                alert("Erro ao comunicar com o servidor: " + err);
+            } finally {
+                btn.innerText = orig;
+                btn.disabled = false;
+            }
+        };
+
+        // Get resumes
+        async function fetchResumes() {
+            try {
+                const res = await fetch('/api/resumes/');
+                const list = await res.json();
+                const container = document.getElementById('cv-list');
+                if (list.length === 0) {
+                    container.innerHTML = `<p class="text-gray-400">Nenhum currículo carregado.</p>`;
+                    return;
+                }
+                container.innerHTML = `<h3 class="font-bold mb-1">Currículos Ativos:</h3>` + list.map(cv => `
+                    <div class="bg-gray-100 hover:bg-gray-150 rounded px-2.5 py-1.5 flex justify-between items-center text-gray-700 font-mono text-[11px] border border-gray-200">
+                        <span class="truncate max-w-[180px] font-semibold">${cv.version_name.toUpperCase()}: ${cv.filename}</span>
+                        <button onclick="deleteResume(${cv.id}, '${cv.version_name}')" class="text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition" title="Remover Currículo">
+                            &times;
+                        </button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function deleteResume(id, name) {
+            if (!confirm(`Deseja realmente remover o currículo "${name.toUpperCase()}"?`)) return;
+            try {
+                const res = await fetch(`/api/resumes/${id}`, { method: 'DELETE' });
+                if (res.ok) {
+                    alert("Currículo removido com sucesso!");
+                    fetchResumes();
+                } else {
+                    const err = await res.json();
+                    alert("Erro ao remover currículo: " + (err.detail || "Erro inesperado."));
+                }
+            } catch (err) {
+                alert("Erro de conexão ao remover: " + err);
+            }
+        }
+
+        // Upload resume handler
+        document.getElementById('upload-cv-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const version = document.getElementById('cv-version').value;
+            const fileInput = document.getElementById('cv-file');
+            if (fileInput.files.length === 0) return alert("Selecione um arquivo PDF.");
+
+            const formData = new FormData();
+            formData.append('version_name', version);
+            formData.append('file', fileInput.files[0]);
+
+            const submitBtn = e.target.querySelector('button');
+            const orig = submitBtn.innerText;
+            submitBtn.innerText = "Processando com IA...";
+            submitBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/resumes/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (res.ok) {
+                    alert("Currículo processado e perfil profissional configurado com sucesso!");
+                    fileInput.value = "";
+                    document.getElementById('cv-version').value = "";
+                    fetchResumes();
+                } else {
+                    const err = await res.json();
+                    alert("Erro no upload do currículo: " + (err.detail || "Erro inesperado."));
+                }
+            } catch (err) {
+                alert("Falha de conexão: " + err);
+            } finally {
+                submitBtn.innerText = orig;
+                submitBtn.disabled = false;
+            }
+        };
+
+        // Add job manually
+        document.getElementById('add-job-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const title = document.getElementById('job-title').value;
+            const company = document.getElementById('job-company').value;
+            const url = document.getElementById('job-url').value;
+            const description = document.getElementById('job-desc').value;
+
+            const btn = e.target.querySelector('button');
+            const origText = btn.innerText;
+            btn.innerText = "Analisando com IA...";
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/jobs/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, company, url, description })
+                });
+                if (res.ok) {
+                    alert("Vaga cadastrada e analisada pelo ATS!");
+                    document.getElementById('job-title').value = "";
+                    document.getElementById('job-company').value = "";
+                    document.getElementById('job-url').value = "";
+                    document.getElementById('job-desc').value = "";
+                    fetchJobs();
+                } else {
+                    const err = await res.json();
+                    alert("Erro ao cadastrar vaga: " + (err.detail || "Erro inesperado."));
+                }
+            } catch (err) {
+                alert("Erro de rede: " + err);
+            } finally {
+                btn.innerText = origText;
+                btn.disabled = false;
+            }
+        };
+
+        // Filter toggle change
+        document.getElementById('toggle-ats-filter').onchange = () => {
+            fetchJobs();
+        };
+
+        // Clear all jobs
+        document.getElementById('btn-clear-jobs').onclick = async () => {
+            if (!confirm("Deseja realmente limpar toda a lista de vagas detectadas?")) return;
+            const btn = document.getElementById('btn-clear-jobs');
+            const orig = btn.innerText;
+            btn.innerText = "Limpando...";
+            btn.disabled = true;
+            try {
+                const res = await fetch('/api/jobs/clear', { method: 'DELETE' });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(data.message || "Lista de vagas limpa com sucesso!");
+                    resetApprovalBox();
+                    fetchJobs();
+                } else {
+                    const err = await res.json();
+                    alert("Erro ao limpar vagas: " + (err.detail || "Consulte logs."));
+                }
+            } catch (err) {
+                alert("Erro de conexão: " + err);
+            } finally {
+                btn.innerText = orig;
+                btn.disabled = false;
+            }
+        };
+
+        // List jobs
+        async function fetchJobs() {
+            try {
+                const res = await fetch('/api/jobs/');
+                const jobs = await res.json();
+                
+                const resApps = await fetch('/api/applications/');
+                const apps = await resApps.json();
+                
+                // Map job -> candidacy mapping
+                const appsMap = {};
+                apps.forEach(app => {
+                    appsMap[app.job_id] = app;
+                });
+
+                const container = document.getElementById('jobs-list');
+                if (jobs.length === 0) {
+                    container.innerHTML = `<p class="text-sm text-gray-500">Nenhuma vaga cadastrada.</p>`;
+                    return;
+                }
+
+                const onlyAts80 = document.getElementById('toggle-ats-filter').checked;
+                let displayedJobs = jobs;
+
+                if (onlyAts80) {
+                    displayedJobs = jobs.filter(j => {
+                        const app = appsMap[j.id] || j.application;
+                        return app && app.score !== null && app.score >= 80;
+                    });
+                }
+
+                const highAtsCount = jobs.filter(j => {
+                    const app = appsMap[j.id] || j.application;
+                    return app && app.score !== null && app.score >= 80;
+                }).length;
+
+                document.getElementById('ats-counter').innerText = `🎯 ${highAtsCount} vaga(s) com Match ATS &ge; 80% (alta chance de aceite)`;
+
+                if (displayedJobs.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-8 text-gray-500 bg-gray-50 rounded border border-dashed border-gray-200 p-4">
+                            <p class="font-medium text-sm">Nenhuma vaga atinge o corte ATS &ge; 80% no momento.</p>
+                            <p class="text-xs text-gray-400 mt-1">Desmarque o filtro acima para ver todas as vagas ou clique em "Buscar Vagas Agora".</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = displayedJobs.map(j => {
+                    const app = appsMap[j.id] || j.application;
+                    let scoreBadge = '';
+                    let statusLabel = 'SEM CANDIDATURA';
+                    let statusClass = 'bg-gray-100 text-gray-600';
+                    let actionText = 'Avaliar ATS / Gerar Candidatura';
+                    
+                    if (app) {
+                        statusLabel = app.status;
+                        const isHigh = app.score >= 80;
+                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${isHigh ? 'fit-high font-extrabold shadow-xs' : 'fit-review'}">${isHigh ? '🎯 ATS ' : ''}${app.score}% ${app.fit}</span>`;
+                        
+                        if (app.status === 'SENT') {
+                            statusClass = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                            actionText = 'Ver Candidatura (ENVIADA)';
+                        } else if (app.status === 'REVIEW') {
+                            statusClass = 'bg-yellow-100 text-amber-800 border-amber-200 border';
+                            actionText = 'Aprovar / Editar Candidatura';
+                        } else if (app.status === 'ARCHIVED') {
+                            statusClass = 'bg-red-100 text-red-700';
+                            actionText = 'Recriar';
+                        }
+                    }
+
+                    return `
+                        <div class="bg-white p-4 rounded-lg border ${app && app.score >= 80 ? 'border-emerald-300 shadow-sm ring-1 ring-emerald-100' : 'border-gray-200'} hover:border-indigo-400 transition-all flex flex-col justify-between">
+                            <div class="flex justify-between items-start mb-2">
+                                <div>
+                                    <h4 class="font-bold text-gray-900 leading-tight">${j.title}</h4>
+                                    <p class="text-xs text-gray-500">${j.company} - ${j.location || 'N/A'} (${j.work_mode || 'N/A'})</p>
+                                </div>
+                                <div class="flex flex-col items-end gap-1">
+                                    <span class="px-2 py-0.5 text-[10px] font-semibold rounded ${statusClass}">${statusLabel}</span>
+                                    ${scoreBadge}
+                                </div>
+                            </div>
+                            <div class="mt-3 flex justify-between items-center">
+                                ${j.url ? `<a href="${j.url}" target="_blank" class="text-xs text-indigo-500 hover:underline flex items-center gap-1"><span>Link externo</span> &nearr;</a>` : '<span></span>'}
+                                <button onclick="selectJobForApproval(${j.id})" class="text-xs font-semibold ${app && app.score >= 80 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'} py-1.5 px-3 rounded transition">
+                                    ${actionText}
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error("Erro ao listar vagas:", err);
+            }
+        }
+
+        // Job selection handler for approval central
+        async function selectJobForApproval(jobId) {
+            document.getElementById('approval-box-empty').classList.add('hidden');
+            const content = document.getElementById('approval-box-content');
+            content.classList.remove('hidden');
+
+            try {
+                // Generate or retrieve application record
+                const res = await fetch(`/api/jobs/${jobId}/generate-application`, { method: 'POST' });
+                if (!res.ok) {
+                    const err = await res.json();
+                    alert("Erro ao montar proposta: " + (err.detail || "Consulte logs"));
+                    resetApprovalBox();
+                    return;
+                }
+                
+                const appMetrics = await res.json();
+                currentAppId = appMetrics.id;
+
+                // Load detail job matching metrics
+                const resMatch = await fetch(`/api/jobs/${jobId}/match`, { method: 'POST' });
+                const matchMetrics = await resMatch.json();
+
+                // Fill UI Details
+                document.getElementById('app-company').innerText = appMetrics.recipient_email ? `DESTINO: ${appMetrics.recipient_email}` : "E-MAIL DO DESTINATÁRIO A DEFINIR";
+                
+                // Get job details
+                const resJob = await fetch(`/api/jobs/${jobId}`);
+                const jobDetails = await resJob.json();
+                document.getElementById('app-title').innerText = `${jobDetails.title} - ${jobDetails.company}`;
+
+                // Set Badge Fit & ATS Progress
+                const score = appMetrics.score || 0;
+                const badge = document.getElementById('app-badge');
+                badge.innerText = `${score >= 80 ? '🎯 ' : ''}${score}% ${appMetrics.fit}`;
+                badge.className = `px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider border fit-${appMetrics.fit.toLowerCase()}`;
+
+                document.getElementById('ats-score-text').innerText = `${score}%`;
+                const bar = document.getElementById('ats-score-bar');
+                bar.style.width = `${score}%`;
+                if (score >= 80) {
+                    bar.className = "bg-emerald-600 h-2 rounded-full transition-all duration-300";
+                    document.getElementById('ats-score-text').className = "font-extrabold text-sm text-emerald-700";
+                } else if (score >= 60) {
+                    bar.className = "bg-blue-600 h-2 rounded-full transition-all duration-300";
+                    document.getElementById('ats-score-text').className = "font-extrabold text-sm text-blue-700";
+                } else {
+                    bar.className = "bg-amber-500 h-2 rounded-full transition-all duration-300";
+                    document.getElementById('ats-score-text').className = "font-extrabold text-sm text-amber-700";
+                }
+
+                document.getElementById('ats-explanation').innerText = matchMetrics.explanation || "";
+
+                // Strengths & Requirements Matched
+                const strengthsList = (matchMetrics.matched_requirements && matchMetrics.matched_requirements.length > 0)
+                    ? matchMetrics.matched_requirements
+                    : matchMetrics.strengths;
+                document.getElementById('app-strengths').innerHTML = strengthsList.map(s => `<li>${s}</li>`).join('') || '<li>Nenhum requisito identificado</li>';
+                
+                // Gaps
+                const gapsList = (matchMetrics.missing_requirements && matchMetrics.missing_requirements.length > 0)
+                    ? matchMetrics.missing_requirements
+                    : matchMetrics.risks;
+                document.getElementById('app-gaps').innerHTML = gapsList.map(r => `<li>${r}</li>`).join('') || '<li>Nenhum gap crítico detectado</li>';
+
+                // CV Recommended
+                document.getElementById('app-resume').innerText = (matchMetrics.recommended_resume_name || 'PADRÃO').toUpperCase() + '.PDF';
+
+                // Fill form
+                document.getElementById('email-recipient').value = appMetrics.recipient_email || '';
+                document.getElementById('email-subject').value = appMetrics.email_subject || '';
+                document.getElementById('email-body').value = appMetrics.email_body || '';
+                document.getElementById('app-notes').value = appMetrics.notes || '';
+
+            } catch (err) {
+                alert("Erro ao carregar detalhes da aprovação: " + err);
+                resetApprovalBox();
+            }
+        }
+
+        function resetApprovalBox() {
+            document.getElementById('approval-box-empty').classList.remove('hidden');
+            document.getElementById('approval-box-content').classList.add('hidden');
+            currentAppId = null;
+        }
+
+        // Save Draft
+        document.getElementById('btn-save-draft').onclick = async () => {
+            if (!currentAppId) return;
+            const recipient_email = document.getElementById('email-recipient').value;
+            const email_subject = document.getElementById('email-subject').value;
+            const email_body = document.getElementById('email-body').value;
+            const notes = document.getElementById('app-notes').value;
+
+            try {
+                const res = await fetch(`/api/applications/${currentAppId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipient_email, email_subject, email_body, notes, status: 'REVIEW' })
+                });
+                if (res.ok) {
+                    alert("Rascunho de candidatura salvo com sucesso!");
+                    fetchJobs();
+                } else {
+                    alert("Erro ao salvar rascunho.");
+                }
+            } catch (err) {
+                alert("Erro de rede: " + err);
+            }
+        };
+
+        // Send Email Handler
+        document.getElementById('btn-send-email').onclick = async () => {
+            if (!currentAppId) return;
+            if (!confirm("Confirma o envio do e-mail com anexo do currículo via Gmail conectado?")) return;
+
+            const recipient_email = document.getElementById('email-recipient').value;
+            const email_subject = document.getElementById('email-subject').value;
+            const email_body = document.getElementById('email-body').value;
+            const notes = document.getElementById('app-notes').value;
+
+            const sendBtn = document.getElementById('btn-send-email');
+            const orig = sendBtn.innerText;
+            sendBtn.innerText = "Disparando via Gmail API...";
+            sendBtn.disabled = true;
+
+            try {
+                // First update body parameters
+                await fetch(`/api/applications/${currentAppId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recipient_email, email_subject, email_body, notes })
+                });
+
+                // Trigger email dispatch
+                const res = await fetch(`/api/applications/${currentAppId}/send`, { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    alert(`E-mail de candidatura disparado com sucesso! (Message ID: ${data.message_id || 'Enviado'})`);
+                    resetApprovalBox();
+                    fetchJobs();
+                } else {
+                    const err = await res.json();
+                    alert("Erro ao disparar e-mail: " + (err.detail || "Verifique conexão Gmail"));
+                }
+            } catch (err) {
+                alert("Erro ao enviar: " + err);
+            } finally {
+                sendBtn.innerText = orig;
+                sendBtn.disabled = false;
+            }
+        };
+
+        // Init loads
+        window.onload = () => {
+            checkGmailStatus();
+            fetchResumes();
+            fetchJobs();
+        };
+    </script>
+</body>
+</html>

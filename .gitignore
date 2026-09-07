@@ -1,0 +1,36 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+credentials.json
+token.json
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+job_hunter.db
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE configurations
+.vscode/
+.idea/
+
+# Uploaded resumes and local files
+uploads/
+app/uploads/*
+!app/uploads/.gitkeep
+
+# System and logs
+Thumbs.db
+desktop.ini
+*.log
