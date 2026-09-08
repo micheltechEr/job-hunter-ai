@@ -145,11 +145,11 @@ class GmailService:
         # Retrieve verified email address if permitted, fallback gracefully
         email_address = "Conta Gmail Conectada"
         try:
-            service = build("gmail", "v1", credentials=creds)
-            profile = service.users().getProfile(userId="me").execute()
-            email_address = profile.get("emailAddress", email_address)
+            oauth_service = build("oauth2", "v2", credentials=creds)
+            userinfo = oauth_service.userinfo().get().execute()
+            email_address = userinfo.get("email", email_address)
         except Exception as profile_err:
-            logger.info(f"Gmail profile info read notice: {profile_err}. Token saved and valid for send.")
+            logger.info(f"Gmail userinfo read notice: {profile_err}. Token saved and valid for send.")
             
         return email_address
 
@@ -164,10 +164,15 @@ class GmailService:
     def get_profile(self) -> dict:
         """Get authenticating Gmail account user profile information."""
         try:
-            service = self._get_service()
-            return service.users().getProfile(userId="me").execute()
+            creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
+            oauth_service = build("oauth2", "v2", credentials=creds)
+            userinfo = oauth_service.userinfo().get().execute()
+            return {
+                "emailAddress": userinfo.get("email", "Conta Conectada"),
+                "messagesTotal": 0
+            }
         except Exception as e:
-            logger.warning(f"Could not fetch full Gmail profile (using fallback): {e}")
+            logger.warning(f"Could not fetch Gmail userinfo (using fallback): {e}")
             return {"emailAddress": "Conta Conectada", "messagesTotal": 0}
 
     def send_email(self, subject: str, body: str, recipient: str, attachment_path: Optional[str] = None) -> dict:
