@@ -18,6 +18,7 @@ from app.api.resumes import router as resumes_router
 from app.api.applications import router as applications_router
 from app.api.gmail import router as gmail_router
 from app.services.scheduler import start_scheduler, shutdown_scheduler
+from app.services.ats_queue import ats_worker_queue
 from app.services.rate_limiter import APIRateLimitMiddleware
 
 # Configure logging
@@ -53,11 +54,13 @@ async def startup_event():
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     logger.info("Initializing database schema...")
     await init_db()
+    await ats_worker_queue.start()
     start_scheduler()
 
 @app.on_event("shutdown")
-def shutdown_event():
-    logger.info("Shutting down scheduler...")
+async def shutdown_event():
+    logger.info("Shutting down ATS Queue and scheduler...")
+    await ats_worker_queue.shutdown()
     shutdown_scheduler()
 
 # Mount routers

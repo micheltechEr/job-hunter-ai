@@ -117,6 +117,11 @@
                     </div>
                 </div>
 
+                <!-- Instant Search Input -->
+                <div class="mb-3">
+                    <input type="text" id="job-search-input" placeholder="🔍 Pesquisar em tempo real por cargo, empresa, stack..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-gray-50/50">
+                </div>
+
                 <div id="jobs-list" class="space-y-3 max-h-[75vh] overflow-y-auto">
                     <p class="text-sm text-gray-500">Nenhuma vaga cadastrada.</p>
                 </div>
@@ -429,103 +434,141 @@
             }
         };
 
-        // List jobs
+        // List jobs with instant live filtering & background ATS status
+        let cachedJobsList = [];
+        let cachedAppsMap = {};
+
+        function renderFilteredJobs() {
+            const container = document.getElementById('jobs-list');
+            if (!container) return;
+
+            if (cachedJobsList.length === 0) {
+                container.innerHTML = `<p class="text-sm text-gray-500">Nenhuma vaga cadastrada.</p>`;
+                return;
+            }
+
+            const onlyAts80 = document.getElementById('toggle-ats-filter').checked;
+            const searchVal = (document.getElementById('job-search-input')?.value || '').toLowerCase().trim();
+
+            let displayedJobs = cachedJobsList.filter(j => {
+                const app = cachedAppsMap[j.id] || j.application;
+                
+                // ATS Filter
+                if (onlyAts80) {
+                    const passScore = app && app.score !== null && app.score >= 80;
+                    if (!passScore) return false;
+                }
+
+                // Search Filter
+                if (searchVal) {
+                    const titleMatch = (j.title || '').toLowerCase().includes(searchVal);
+                    const companyMatch = (j.company || '').toLowerCase().includes(searchVal);
+                    const descMatch = (j.description || '').toLowerCase().includes(searchVal);
+                    const locMatch = (j.location || '').toLowerCase().includes(searchVal);
+                    if (!titleMatch && !companyMatch && !descMatch && !locMatch) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            const highAtsCount = cachedJobsList.filter(j => {
+                const app = cachedAppsMap[j.id] || j.application;
+                return app && app.score !== null && app.score >= 80;
+            }).length;
+
+            const counterEl = document.getElementById('ats-counter');
+            if (counterEl) {
+                counterEl.innerText = `🎯 ${highAtsCount} vaga(s) com Match ATS ≥ 80% (alta chance de aceite)`;
+            }
+
+            if (displayedJobs.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-8 text-gray-500 bg-gray-50 rounded border border-dashed border-gray-200 p-4">
+                        <p class="font-medium text-sm">Nenhuma vaga encontrada para os filtros atuais.</p>
+                        <p class="text-xs text-gray-400 mt-1">Ajuste o termo de busca ou desmarque o filtro de ATS &ge; 80%.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = displayedJobs.map(j => {
+                const app = cachedAppsMap[j.id] || j.application;
+                let scoreBadge = '';
+                let statusLabel = 'SEM CANDIDATURA';
+                let statusClass = 'bg-gray-100 text-gray-600';
+                let actionText = 'Avaliar ATS / Gerar Candidatura';
+                
+                if (app) {
+                    statusLabel = app.status;
+                    if (app.status === 'ANALYZING') {
+                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 animate-pulse border border-amber-300">⏳ Analisando ATS...</span>`;
+                        statusClass = 'bg-amber-50 text-amber-700 border-amber-200 border';
+                    } else if (app.score !== null && app.score !== undefined) {
+                        const isHigh = app.score >= 80;
+                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${isHigh ? 'fit-high font-extrabold shadow-xs' : 'fit-review'}">${isHigh ? '🎯 ATS ' : ''}${app.score}% ${app.fit || ''}</span>`;
+                    }
+                    
+                    if (app.status === 'SENT') {
+                        statusClass = 'bg-emerald-100 text-emerald-800 border-emerald-200';
+                        actionText = 'Ver Candidatura Enviada';
+                    } else if (app.status === 'REVIEW') {
+                        statusClass = 'bg-yellow-100 text-amber-800 border-amber-200 border';
+                        actionText = 'Aprovar / Editar Candidatura';
+                    } else if (app.status === 'ARCHIVED') {
+                        statusClass = 'bg-red-100 text-red-700';
+                        actionText = 'Recriar';
+                    }
+                }
+
+                return `
+                    <div class="bg-white p-4 rounded-lg border ${app && app.score >= 80 ? 'border-emerald-300 shadow-sm ring-1 ring-emerald-100' : 'border-gray-200'} hover:border-indigo-400 transition-all flex flex-col justify-between">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <h4 class="font-bold text-gray-900 leading-tight">${j.title}</h4>
+                                <p class="text-xs text-gray-500">${j.company} - ${j.location || 'N/A'} (${j.work_mode || 'N/A'})</p>
+                            </div>
+                            <div class="flex flex-col items-end gap-1">
+                                <span class="px-2 py-0.5 text-[10px] font-semibold rounded ${statusClass}">${statusLabel}</span>
+                                ${scoreBadge}
+                            </div>
+                        </div>
+                        <div class="mt-3 flex justify-between items-center">
+                            ${j.url ? `<a href="${j.url}" target="_blank" class="text-xs text-indigo-500 hover:underline flex items-center gap-1"><span>Link externo</span> &nearr;</a>` : '<span></span>'}
+                            <button onclick="selectJobForApproval(${j.id})" class="text-xs font-semibold ${app && app.score >= 80 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'} py-1.5 px-3 rounded transition">
+                                ${actionText}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
         async function fetchJobs() {
             try {
                 const res = await fetch('/api/jobs/');
-                const jobs = await res.json();
+                cachedJobsList = await res.json();
                 
                 const resApps = await fetch('/api/applications/');
                 const apps = await resApps.json();
                 
                 // Map job -> candidacy mapping
-                const appsMap = {};
+                cachedAppsMap = {};
                 apps.forEach(app => {
-                    appsMap[app.job_id] = app;
+                    cachedAppsMap[app.job_id] = app;
                 });
 
-                const container = document.getElementById('jobs-list');
-                if (jobs.length === 0) {
-                    container.innerHTML = `<p class="text-sm text-gray-500">Nenhuma vaga cadastrada.</p>`;
-                    return;
-                }
-
-                const onlyAts80 = document.getElementById('toggle-ats-filter').checked;
-                let displayedJobs = jobs;
-
-                if (onlyAts80) {
-                    displayedJobs = jobs.filter(j => {
-                        const app = appsMap[j.id] || j.application;
-                        return app && app.score !== null && app.score >= 80;
-                    });
-                }
-
-                const highAtsCount = jobs.filter(j => {
-                    const app = appsMap[j.id] || j.application;
-                    return app && app.score !== null && app.score >= 80;
-                }).length;
-
-                document.getElementById('ats-counter').innerText = `🎯 ${highAtsCount} vaga(s) com Match ATS &ge; 80% (alta chance de aceite)`;
-
-                if (displayedJobs.length === 0) {
-                    container.innerHTML = `
-                        <div class="text-center py-8 text-gray-500 bg-gray-50 rounded border border-dashed border-gray-200 p-4">
-                            <p class="font-medium text-sm">Nenhuma vaga atinge o corte ATS &ge; 80% no momento.</p>
-                            <p class="text-xs text-gray-400 mt-1">Desmarque o filtro acima para ver todas as vagas ou clique em "Buscar Vagas Agora".</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                container.innerHTML = displayedJobs.map(j => {
-                    const app = appsMap[j.id] || j.application;
-                    let scoreBadge = '';
-                    let statusLabel = 'SEM CANDIDATURA';
-                    let statusClass = 'bg-gray-100 text-gray-600';
-                    let actionText = 'Avaliar ATS / Gerar Candidatura';
-                    
-                    if (app) {
-                        statusLabel = app.status;
-                        const isHigh = app.score >= 80;
-                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${isHigh ? 'fit-high font-extrabold shadow-xs' : 'fit-review'}">${isHigh ? '🎯 ATS ' : ''}${app.score}% ${app.fit}</span>`;
-                        
-                        if (app.status === 'SENT') {
-                            statusClass = 'bg-emerald-100 text-emerald-800 border-emerald-200';
-                            actionText = 'Ver Candidatura (ENVIADA)';
-                        } else if (app.status === 'REVIEW') {
-                            statusClass = 'bg-yellow-100 text-amber-800 border-amber-200 border';
-                            actionText = 'Aprovar / Editar Candidatura';
-                        } else if (app.status === 'ARCHIVED') {
-                            statusClass = 'bg-red-100 text-red-700';
-                            actionText = 'Recriar';
-                        }
-                    }
-
-                    return `
-                        <div class="bg-white p-4 rounded-lg border ${app && app.score >= 80 ? 'border-emerald-300 shadow-sm ring-1 ring-emerald-100' : 'border-gray-200'} hover:border-indigo-400 transition-all flex flex-col justify-between">
-                            <div class="flex justify-between items-start mb-2">
-                                <div>
-                                    <h4 class="font-bold text-gray-900 leading-tight">${j.title}</h4>
-                                    <p class="text-xs text-gray-500">${j.company} - ${j.location || 'N/A'} (${j.work_mode || 'N/A'})</p>
-                                </div>
-                                <div class="flex flex-col items-end gap-1">
-                                    <span class="px-2 py-0.5 text-[10px] font-semibold rounded ${statusClass}">${statusLabel}</span>
-                                    ${scoreBadge}
-                                </div>
-                            </div>
-                            <div class="mt-3 flex justify-between items-center">
-                                ${j.url ? `<a href="${j.url}" target="_blank" class="text-xs text-indigo-500 hover:underline flex items-center gap-1"><span>Link externo</span> &nearr;</a>` : '<span></span>'}
-                                <button onclick="selectJobForApproval(${j.id})" class="text-xs font-semibold ${app && app.score >= 80 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'} py-1.5 px-3 rounded transition">
-                                    ${actionText}
-                                </button>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
+                renderFilteredJobs();
             } catch (err) {
                 console.error("Erro ao listar vagas:", err);
             }
         }
+
+        document.getElementById('job-search-input')?.addEventListener('input', renderFilteredJobs);
+        document.getElementById('toggle-ats-filter').onchange = () => {
+            renderFilteredJobs();
+        };
 
         // Job selection handler for approval central
         async function selectJobForApproval(jobId) {

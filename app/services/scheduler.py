@@ -47,26 +47,8 @@ async def run_job_hunting_scrape():
                 gp_list = await scraper_service.scrape_gupy_jobs(keyword=role, limit=2)
                 if gp_list:
                     await scraper_service.ingest_new_jobs(db, gp_list)
-                
-                # 3. Auto-draft application candidate reviews for high-scoring jobs
-                result_jobs = await db.execute(select(Job))
-                inserted_jobs = result_jobs.scalars().all()
-                
-                for job in inserted_jobs:
-                    # Check if application exists
-                    res_app = await db.execute(select(Application).where(Application.job_id == job.id))
-                    app = res_app.scalars().first()
-                    
-                    if not app:
-                        try:
-                            # Trigger draft generation automatically mapping the application endpoint
-                            await generate_application_endpoint(job.id, db)
-                            logger.info(f"Automatically generated application draft for job: {job.title}")
-                        except Exception as app_ex:
-                            logger.warning(f"Skipping auto-app-draft generation for job {job.id}: {app_ex}")
-                            continue
             
-            logger.info("Automated job hunting scrape run completed successfully.")
+            logger.info("Automated job hunting scrape run completed successfully. Ingested jobs enqueued for ATS.")
             
         except Exception as e:
             logger.error(f"Error executing scraper scheduler job: {e}")

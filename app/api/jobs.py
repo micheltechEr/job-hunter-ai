@@ -4,21 +4,28 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy import or_
+
 from app.database import get_db
 from app.models.db_models import Job, JobAnalysis, Application, UserProfile
 from app.schemas.schemas import JobCreate, JobResponse, MatchResponse, ApplicationResponse
 from app.services.job_analysis import job_analysis_service
 from app.services.matching import matching_service
 from app.services.application_generator import application_generator_service
+from app.services.ats_queue import ats_worker_queue
 
 router = APIRouter()
 logger = logging.getLogger("job_hunter.api.jobs")
 
+
 @router.post("/", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
-    """Receives a new job, extracts metrics via LLM, and persists both records."""
+    """
+    Receives a new job, persists it instantly to database so it is immediately searchable,
+    and enqueues background ATS analysis to avoid blocking user interaction.
+    """
     try:
-        # 1. Create and save job
+        # 1. Create and save job record immediately
         job = Job(
             title=job_in.title,
             company=job_in.company,
@@ -29,58 +36,87 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
             salary=job_in.salary
         )
         db.add(job)
-        await db.flush() # obtain job.id
+        await db.flush()
 
-        # 2. Extract job metrics using LLM analysis service
-        analysis_data = await job_analysis_service.analyze_job_description(job.description)
-        
-        # 3. Create job analysis record
-        db_analysis = JobAnalysis(
+        # 2. Attach initial placeholder application
+        init_app = Application(
             job_id=job.id,
-            extracted_role=analysis_data.extracted_role,
-            seniority=analysis_data.seniority,
-            location=analysis_data.location,
-            work_mode=analysis_data.work_mode,
-            required_skills=analysis_data.required_skills,
-            nice_to_have=analysis_data.nice_to_have,
-            responsibilities=analysis_data.responsibilities,
-            education=analysis_data.education,
-            languages=analysis_data.languages,
-            experience_required=analysis_data.experience_required,
-            raw_json=analysis_data.dict()
+            status="ANALYZING"
         )
-        db.add(db_analysis)
+        db.add(init_app)
         await db.commit()
-        
+
+        # 3. Enqueue background ATS calculation (Non-blocking)
+        await ats_worker_queue.enqueue(job.id)
+
+        # 4. Fetch full job object with relations
         result = await db.execute(
             select(Job)
             .options(selectinload(Job.analysis), selectinload(Job.application))
             .where(Job.id == job.id)
         )
         return result.scalars().first()
+
     except Exception as e:
-        logger.error(f"Failed to create and analyze job: {e}")
+        logger.error(f"Failed to create job: {e}")
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Erro de processamento da análise do descritivo da vaga: {str(e)}"
+            detail=f"Erro ao cadastrar vaga: {str(e)}"
         )
+
 
 @router.get("/", response_model=List[JobResponse])
 async def list_jobs(
+    search: Optional[str] = Query(None, description="Busca rápida por palavra-chave em cargo, empresa, localização ou descrição"),
     min_score: Optional[int] = Query(None, description="Filtra vagas com score ATS mínimo (ex: 80)"),
+    status_filter: Optional[str] = Query(None, description="Filtra por status da candidatura (ex: HIGH_MATCH, ANALYZING, DISCOVERED)"),
+    work_mode: Optional[str] = Query(None, description="Filtra por modalidade (Remote, Hybrid, On-site)"),
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
-    """Lists jobs with eager loading of analysis and application, supporting ATS minimum score filtering."""
-    result = await db.execute(
+    """
+    Lists and searches jobs instantly while ATS generation runs concurrently in the background.
+    Supports multi-field keyword search, ATS score filtering, and work mode filters.
+    """
+    query = (
         select(Job)
         .options(selectinload(Job.analysis), selectinload(Job.application))
         .order_by(Job.created_at.desc())
     )
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                Job.title.ilike(term),
+                Job.company.ilike(term),
+                Job.location.ilike(term),
+                Job.description.ilike(term)
+            )
+        )
+
+    if work_mode and work_mode.strip():
+        query = query.where(Job.work_mode.ilike(f"%{work_mode.strip()}%"))
+
+    query = query.offset(offset).limit(limit)
+    result = await db.execute(query)
     jobs = result.scalars().all()
-    if min_score is not None:
-        jobs = [j for j in jobs if j.application and j.application.score is not None and j.application.score >= min_score]
-    return jobs
+
+    # In-memory post-filtering for application relationships (score / status)
+    filtered_jobs = []
+    for j in jobs:
+        if min_score is not None:
+            if not j.application or j.application.score is None or j.application.score < min_score:
+                continue
+        if status_filter and status_filter.strip():
+            if not j.application or (j.application.status or "").upper() != status_filter.strip().upper():
+                continue
+        filtered_jobs.append(j)
+
+    return filtered_jobs
+
 
 @router.delete("/clear", status_code=status.HTTP_200_OK)
 async def clear_all_jobs(db: AsyncSession = Depends(get_db)):
@@ -92,10 +128,12 @@ async def clear_all_jobs(db: AsyncSession = Depends(get_db)):
         await db.delete(j)
     await db.commit()
     logger.info(f"Cleared all {count} jobs from database.")
-    return {"message": f"Todas as {count} vagas foram removidas com sucesso.", "count": count}
+    return {"message": f"Removidas todas as {count} vagas com sucesso.", "cleared_count": count}
+
 
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
+    """Retrieves a single job with analysis and application details."""
     result = await db.execute(
         select(Job)
         .options(selectinload(Job.analysis), selectinload(Job.application))
@@ -105,6 +143,7 @@ async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Vaga não encontrada.")
     return job
+
 
 @router.delete("/{job_id}", status_code=status.HTTP_200_OK)
 async def delete_job(job_id: int, db: AsyncSession = Depends(get_db)):
@@ -117,6 +156,7 @@ async def delete_job(job_id: int, db: AsyncSession = Depends(get_db)):
     await db.commit()
     logger.info(f"Job {job_id} deleted.")
     return {"message": "Vaga removida com sucesso.", "id": job_id}
+
 
 @router.post("/{job_id}/match", response_model=MatchResponse)
 async def match_job(job_id: int, db: AsyncSession = Depends(get_db)):
@@ -133,59 +173,80 @@ async def match_job(job_id: int, db: AsyncSession = Depends(get_db)):
             detail=f"Erro durante cálculo de match: {str(e)}"
         )
 
+
 @router.post("/{job_id}/generate-application", response_model=ApplicationResponse)
 async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(get_db)):
-    """Triggers complete matching checks, recommends CV, writes email draft, and creates an Application record in REVIEW status."""
+    """Triggers complete ATS evaluation and drafts candidate personalized application."""
     try:
-        # 1. Perform match to choose CV and get score
-        match_res = await match_job(job_id, db)
-        
-        # 2. Fetch Job and its Analysis
-        result = await db.execute(select(Job).options(selectinload(Job.analysis)).where(Job.id == job_id))
-        job = result.scalars().first()
-        result_analysis = await db.execute(select(JobAnalysis).where(JobAnalysis.job_id == job_id))
-        job_analysis = result_analysis.scalars().first()
-
-        # 3. Fetch User Profile
-        result_profile = await db.execute(select(UserProfile).options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects)).limit(1))
-        user_profile = result_profile.scalars().first()
-        if not user_profile:
-             raise HTTPException(status_code=400, detail="Perfil de usuário ausente. Carregue um currículo antes.")
-
-        # 4. Generate email draft using AI application generator service
-        draft = await application_generator_service.generate_draft(user_profile, job, job_analysis)
-
-        # 5. Check if user already generated an application for this job
-        result_app = await db.execute(select(Application).where(Application.job_id == job_id))
-        existing_app = result_app.scalars().first()
-
-        recipient = draft.recipient_email if draft.recipient_email else ""
-
-        if existing_app:
-            # Update draft info
-            existing_app.resume_id = match_res.recommended_resume_id
-            existing_app.recipient_email = recipient
-            existing_app.score = match_res.score
-            existing_app.fit = match_res.fit
-            existing_app.email_subject = draft.subject
-            existing_app.email_body = draft.body
-            existing_app.status = "REVIEW" # Set review status for approval
-            await db.commit()
-            await db.refresh(existing_app)
-            return existing_app
-
-        # Create new application tracking record
-        app_record = Application(
-            job_id=job.id,
-            resume_id=match_res.recommended_resume_id,
-            recipient_email=recipient,
-            score=match_res.score,
-            fit=match_res.fit,
-            email_subject=draft.subject,
-            email_body=draft.body,
-            status="REVIEW" # Waiting human-in-the-loop approval
+        res = await db.execute(
+            select(Job)
+            .options(selectinload(Job.analysis), selectinload(Job.application))
+            .where(Job.id == job_id)
         )
-        db.add(app_record)
+        job = res.scalars().first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found.")
+
+        # Ensure analysis exists
+        if not job.analysis:
+            analysis_data = await job_analysis_service.analyze_job_description(job.description)
+            db_analysis = JobAnalysis(
+                job_id=job.id,
+                extracted_role=analysis_data.extracted_role,
+                seniority=analysis_data.seniority,
+                location=analysis_data.location,
+                work_mode=analysis_data.work_mode,
+                required_skills=analysis_data.required_skills,
+                nice_to_have=analysis_data.nice_to_have,
+                responsibilities=analysis_data.responsibilities,
+                education=analysis_data.education,
+                languages=analysis_data.languages,
+                experience_required=analysis_data.experience_required,
+                raw_json=analysis_data.model_dump() if hasattr(analysis_data, "model_dump") else analysis_data.dict()
+            )
+            db.add(db_analysis)
+            await db.commit()
+            await db.refresh(job)
+
+        match_res = await matching_service.match_job_profile(db, job_id)
+
+        res_prof = await db.execute(
+            select(UserProfile)
+            .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
+            .limit(1)
+        )
+        user_prof = res_prof.scalars().first()
+        if not user_prof:
+            raise HTTPException(status_code=400, detail="User profile not configured.")
+
+        draft = await application_generator_service.generate_draft(user_prof, job, job.analysis)
+
+        res_app = await db.execute(select(Application).where(Application.job_id == job_id))
+        app_record = res_app.scalars().first()
+
+        recipient = draft.recipient_email if draft.recipient_email else (app_record.recipient_email if app_record else None)
+
+        if app_record:
+            app_record.resume_id = match_res.recommended_resume_id
+            app_record.recipient_email = recipient
+            app_record.score = match_res.score
+            app_record.fit = match_res.fit
+            app_record.email_subject = draft.subject
+            app_record.email_body = draft.body
+            app_record.status = "REVIEW" if match_res.score >= 60 else "DISCOVERED"
+        else:
+            app_record = Application(
+                job_id=job_id,
+                resume_id=match_res.recommended_resume_id,
+                recipient_email=recipient,
+                score=match_res.score,
+                fit=match_res.fit,
+                email_subject=draft.subject,
+                email_body=draft.body,
+                status="REVIEW"
+            )
+            db.add(app_record)
+
         await db.commit()
         await db.refresh(app_record)
         return app_record
@@ -198,6 +259,7 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro na preparação do rascunho de candidatura: {str(e)}"
         )
+
 
 @router.post("/scrape/trigger", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_jobs_scraping():

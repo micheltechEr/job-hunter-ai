@@ -262,30 +262,44 @@ class ScraperService:
         return jobs_scraped
 
     async def ingest_new_jobs(self, db: AsyncSession, scraped_jobs: List[Dict]):
-        """Saves scraped jobs to the database and automatically triggers matching calculations."""
+        """Saves scraped jobs to the database immediately and enqueues background ATS analysis."""
+        from app.services.ats_queue import ats_worker_queue
         for job_dict in scraped_jobs:
             try:
                 # 1. Skip if already processed URL
-                result = await db.execute(select(Job).where(Job.url == job_dict["url"]))
-                existing = result.scalars().first()
-                if existing:
-                    continue
+                if job_dict.get("url"):
+                    result = await db.execute(select(Job).where(Job.url == job_dict["url"]))
+                    existing = result.scalars().first()
+                    if existing:
+                        continue
                 
-                # 2. Add job via endpoint logic to trigger LLM analysis and matching
-                job_in = JobCreate(
+                # 2. Add job record immediately
+                job = Job(
                     title=job_dict["title"],
                     company=job_dict["company"],
-                    url=job_dict["url"],
+                    url=job_dict.get("url"),
                     description=job_dict["description"],
-                    location=job_dict["location"],
-                    work_mode=job_dict["work_mode"],
-                    salary=job_dict["salary"]
+                    location=job_dict.get("location"),
+                    work_mode=job_dict.get("work_mode"),
+                    salary=job_dict.get("salary")
                 )
-                
-                await create_job(job_in, db)
-                logger.info(f"Automatically ingested job: {job_dict['title']} - {job_dict['company']}")
+                db.add(job)
+                await db.flush()
+
+                # 3. Initial placeholder application for status tracking
+                init_app = Application(
+                    job_id=job.id,
+                    status="ANALYZING"
+                )
+                db.add(init_app)
+                await db.commit()
+
+                # 4. Enqueue non-blocking background ATS calculation
+                await ats_worker_queue.enqueue(job.id)
+                logger.info(f"Ingested job: {job.title} - {job.company} (enqueued for ATS)")
             except Exception as e:
                 logger.error(f"Failed to ingest scraped job {job_dict.get('title')}: {e}")
+                await db.rollback()
                 continue
 
 
