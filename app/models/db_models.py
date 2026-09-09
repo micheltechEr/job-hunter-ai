@@ -90,7 +90,7 @@ class JobAnalysis(Base):
     __tablename__ = "job_analyses"
 
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), unique=True, nullable=False)
     extracted_role = Column(String(255), nullable=True)
     seniority = Column(String(100), nullable=True)
     location = Column(String(255), nullable=True)
@@ -111,7 +111,7 @@ class Application(Base):
     __tablename__ = "applications"
 
     id = Column(Integer, primary_key=True, index=True)
-    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), unique=True, nullable=False)
     resume_id = Column(Integer, ForeignKey("resumes.id", ondelete="SET NULL"), nullable=True)
     recipient_email = Column(String(255), nullable=True)
     score = Column(Integer, nullable=True)
