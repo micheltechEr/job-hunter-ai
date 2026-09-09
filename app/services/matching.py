@@ -23,64 +23,97 @@ class MatchingService:
         raw = f"{job_id}:{job_text}:{resume_id}:{profile_hash}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    async def match_job_profile(self, db: AsyncSession, job_id: int) -> MatchResponse:
+    async def match_job_profile(
+        self,
+        db: AsyncSession,
+        job_id: int,
+        job: Optional[Job] = None,
+        job_analysis: Optional[JobAnalysis] = None,
+        user_profile: Optional[UserProfile] = None,
+        resumes: Optional[List[Resume]] = None
+    ) -> MatchResponse:
         """Determines compatibility score and fit category applying rigorous ATS methodology with caching & optimizations."""
         
-        # 1. Fetch Job and its Analysis
-        result = await db.execute(select(Job).where(Job.id == job_id))
-        job = result.scalars().first()
+        # 1. Fetch Job and its Analysis if not provided
         if not job:
-            raise ValueError(f"Job with id {job_id} not found.")
+            result = await db.execute(select(Job).where(Job.id == job_id))
+            job = result.scalars().first()
+            if not job:
+                raise ValueError(f"Job with id {job_id} not found.")
 
-        result_analysis = await db.execute(select(JobAnalysis).where(JobAnalysis.job_id == job_id))
-        job_analysis = result_analysis.scalars().first()
         if not job_analysis:
-            raise ValueError(f"Analysis for job id {job_id} not found.")
+            result_analysis = await db.execute(select(JobAnalysis).where(JobAnalysis.job_id == job_id))
+            job_analysis = result_analysis.scalars().first()
+            if not job_analysis:
+                raise ValueError(f"Analysis for job id {job_id} not found.")
 
-        # 2. Fetch all Resumes
-        result_resumes = await db.execute(select(Resume))
-        resumes = result_resumes.scalars().all()
-        if not resumes:
-            raise ValueError("No resumes found in the database. Please upload at least one resume.")
+        # 2. Fetch all Resumes if not provided
+        if resumes is None:
+            result_resumes = await db.execute(select(Resume))
+            resumes = result_resumes.scalars().all()
 
-        # 3. Fetch User Profile
-        result_profile = await db.execute(
-            select(UserProfile)
-            .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
-            .limit(1)
-        )
-        user_profile = result_profile.scalars().first()
+        # 3. Fetch User Profile if not provided
         if not user_profile:
-            raise ValueError("User profile not found. Please populate user profile details.")
+            result_profile = await db.execute(
+                select(UserProfile)
+                .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
+                .limit(1)
+            )
+            user_profile = result_profile.scalars().first()
 
-        # 4. Rank resumes using embedding semantic similarity (with vector caching)
-        job_text_for_embed = f"{job.title} | {job.company} | {job.description[:2000]}"
-        job_embedding = await embedding_service.get_embedding(job_text_for_embed)
+        # Graceful fallback if no resume or profile is registered yet
+        if not resumes or not user_profile:
+            return MatchResponse(
+                score=50,
+                fit="REVIEW",
+                matched_requirements=[],
+                missing_requirements=["Currículo ou perfil ainda não cadastrado"],
+                strengths=["Vaga registrada"],
+                risks=["Carregue um currículo para score ATS personalizado"],
+                recommendation=False,
+                explanation="Aguardando upload de currículo para cálculo ATS personalizado.",
+                recommended_resume_id=None,
+                recommended_resume_name=None
+            )
 
-        best_resume: Optional[Resume] = None
-        best_similarity = -1.0
-
-        for res in resumes:
-            if not res.embedding:
-                cv_text = json.dumps(res.parsed_data or {})
-                res.embedding = await embedding_service.get_embedding(cv_text)
-                db.add(res)
-                await db.commit()
-
-            similarity = embedding_service.calculate_similarity(job_embedding, res.embedding)
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_resume = res
-
-        # Check in-memory match cache
         profile_sig = f"{user_profile.name}:{len(user_profile.experiences)}:{user_profile.technologies}"
+        role_key = job_analysis.extracted_role or job.title
+
+        # Fast cache check by job_id + role + profile before any embedding computation
+        quick_cache_key = f"{job_id}:{role_key}:{profile_sig}"
+        if quick_cache_key in self._match_cache:
+            logger.info(f"Fast Cache HIT for Job Match {job_id} ({job.title})")
+            return self._match_cache[quick_cache_key]
+
+        # 4. Rank resumes (Fast path for single resume vs multi-resume semantic embedding)
+        best_resume: Optional[Resume] = None
+        if len(resumes) == 1:
+            best_resume = resumes[0]
+        else:
+            job_text_for_embed = f"{job.title} | {job.company} | {job.description[:2000]}"
+            job_embedding = await embedding_service.get_embedding(job_text_for_embed)
+            best_similarity = -1.0
+            for res in resumes:
+                if not res.embedding:
+                    cv_text = json.dumps(res.parsed_data or {})
+                    res.embedding = await embedding_service.get_embedding(cv_text)
+                    db.add(res)
+                    await db.commit()
+
+                similarity = embedding_service.calculate_similarity(job_embedding, res.embedding)
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_resume = res
+
+        # Check precise cache key
         cache_key = self._get_cache_key(
             job_id,
-            job_analysis.extracted_role or job.title,
+            role_key,
             best_resume.id if best_resume else None,
             profile_sig
         )
         if cache_key in self._match_cache:
+            logger.info(f"Precise Cache HIT for Job Match {job_id}")
             return self._match_cache[cache_key]
 
         # 5. Fast keyword & hard skills intersection
@@ -137,6 +170,7 @@ Skills já pré-identificadas no candidato: {', '.join(matched_quick) if matched
                 match_data.recommended_resume_name = best_resume.version_name
 
             self._match_cache[cache_key] = match_data
+            self._match_cache[quick_cache_key] = match_data
             return match_data
 
         except Exception as e:

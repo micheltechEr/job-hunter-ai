@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Optional, Set, List
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -15,8 +16,13 @@ logger = logging.getLogger("job_hunter.ats_queue")
 
 class ATSWorkerQueue:
     """
-    Asynchronous queue and worker pool for processing Job Analysis and ATS Matching
-    in the background without blocking search or user operations, with concurrency limits.
+    High-resilience asynchronous queue, worker pool and watchdog for processing Job Analysis
+    and ATS Matching in the background.
+
+    GUARANTEES:
+    1. Zero-stall: Jobs NEVER stay stuck in 'ANALYZING' or 'PENDING' even on LLM/Network errors.
+    2. Auto-healing: Workers automatically respawn and recover unprocessed jobs.
+    3. Watchdog: Background task detects and resolves stalled jobs.
     """
 
     def __init__(self, max_concurrency: int = 2):
@@ -24,11 +30,12 @@ class ATSWorkerQueue:
         self.processing_job_ids: Set[int] = set()
         self.max_concurrency = max_concurrency
         self.workers: List[asyncio.Task] = []
+        self.watchdog_task: Optional[asyncio.Task] = None
         self._running = False
         self._lock = asyncio.Lock()
 
     async def ensure_running(self):
-        """Ensures that background workers are active and healthy."""
+        """Ensures that background workers and watchdog are active and healthy."""
         async with self._lock:
             # Clean up dead worker tasks if any
             self.workers = [t for t in self.workers if not t.done()]
@@ -41,6 +48,9 @@ class ATSWorkerQueue:
                     self.workers.append(task)
                 logger.info(f"ATS Worker Queue active with {len(self.workers)} workers.")
 
+            if not self.watchdog_task or self.watchdog_task.done():
+                self.watchdog_task = asyncio.create_task(self._watchdog_loop())
+
     async def start(self):
         """Starts worker tasks and recovers unanalyzed jobs from DB."""
         await self.ensure_running()
@@ -49,6 +59,8 @@ class ATSWorkerQueue:
     async def shutdown(self):
         """Stops workers gracefully."""
         self._running = False
+        if self.watchdog_task:
+            self.watchdog_task.cancel()
         for task in self.workers:
             task.cancel()
         await asyncio.gather(*self.workers, return_exceptions=True)
@@ -88,10 +100,21 @@ class ATSWorkerQueue:
                 if recovered > 0:
                     logger.info(f"Recovered and enqueued {recovered} pending/unscored jobs for ATS.")
         except Exception as e:
-            logger.warning(f"Could not auto-recover pending jobs on startup: {e}")
+            logger.warning(f"Could not auto-recover pending jobs: {e}")
+
+    async def _watchdog_loop(self):
+        """Periodic watchdog preventing any job from staying in 'ANALYZING' forever."""
+        while self._running:
+            try:
+                await asyncio.sleep(20)
+                await self._recover_pending_jobs()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in ATS watchdog loop: {e}")
 
     async def _worker(self, worker_name: str):
-        """Worker loop picking jobs from queue and executing ATS pipeline."""
+        """Worker loop picking jobs from queue and executing ATS pipeline with bounded execution."""
         while self._running:
             try:
                 job_id = await self.queue.get()
@@ -104,16 +127,49 @@ class ATSWorkerQueue:
 
             try:
                 logger.info(f"[{worker_name}] Processing ATS for job {job_id}...")
-                await self._process_job_ats(job_id)
+                # Wrap with timeout per job (max 25s) to guarantee no worker hangs
+                await asyncio.wait_for(self._process_job_ats(job_id), timeout=25.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"[{worker_name}] ATS pipeline timed out for job {job_id}. Applying fallback score.")
+                await self._apply_fallback_score(job_id, reason="Tempo limite excedido na análise com IA")
             except Exception as e:
                 logger.error(f"[{worker_name}] Error processing ATS for job {job_id}: {e}", exc_info=True)
+                await self._apply_fallback_score(job_id, reason=str(e))
             finally:
                 async with self._lock:
                     self.processing_job_ids.discard(job_id)
                 self.queue.task_done()
 
+    async def _apply_fallback_score(self, job_id: int, reason: str):
+        """Emergency fallback ensuring a job NEVER remains stuck in 'ANALYZING' status."""
+        try:
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(Job)
+                    .options(selectinload(Job.analysis), selectinload(Job.application))
+                    .where(Job.id == job_id)
+                )
+                job = res.scalars().first()
+                if not job:
+                    return
+
+                res_app = await db.execute(select(Application).where(Application.job_id == job.id))
+                app = res_app.scalars().first()
+                if not app:
+                    app = Application(job_id=job.id)
+                    db.add(app)
+
+                app.score = 50
+                app.fit = "REVIEW"
+                app.status = "DISCOVERED"
+                app.notes = f"Score automático de contingência: {reason}"
+                await db.commit()
+                logger.info(f"Guaranteed fallback status applied to job {job_id}.")
+        except Exception as fb_err:
+            logger.error(f"Failed to apply fallback to job {job_id}: {fb_err}")
+
     async def _process_job_ats(self, job_id: int):
-        """Executes Job Analysis -> ATS Matching -> Application Draft in one robust pipeline."""
+        """Executes Job Analysis -> ATS Matching -> Application Draft with guaranteed completion."""
         async with AsyncSessionLocal() as db:
             try:
                 # 1. Fetch Job
@@ -124,6 +180,10 @@ class ATSWorkerQueue:
                 )
                 job = res.scalars().first()
                 if not job:
+                    return
+
+                # Skip if already fully processed
+                if job.application and job.application.score is not None and job.application.status not in ("ANALYZING", None):
                     return
 
                 # 2. Extract Job Analysis if missing
@@ -153,7 +213,12 @@ class ATSWorkerQueue:
                 # 3. Calculate ATS Match
                 match_data = None
                 try:
-                    match_data = await matching_service.match_job_profile(db=db, job_id=job.id)
+                    match_data = await matching_service.match_job_profile(
+                        db=db,
+                        job_id=job.id,
+                        job=job,
+                        job_analysis=job.analysis
+                    )
                 except Exception as match_err:
                     logger.warning(f"Skipping ATS match for job {job_id}: {match_err}")
 
@@ -187,6 +252,11 @@ class ATSWorkerQueue:
                                     app.recipient_email = draft.recipient_email
                         except Exception as draft_err:
                             logger.warning(f"Could not generate auto-draft for job {job.id}: {draft_err}")
+                else:
+                    # Guarantee non-pending state even if match_data was None
+                    app.score = 50
+                    app.fit = "REVIEW"
+                    app.status = "DISCOVERED"
 
                 await db.commit()
                 logger.info(f"Finished ATS processing for job {job_id}: {job.title} (Score: {getattr(app, 'score', 'N/A')})")
@@ -194,6 +264,7 @@ class ATSWorkerQueue:
             except Exception as e:
                 logger.error(f"Failed ATS pipeline for job {job_id}: {e}")
                 await db.rollback()
+                await self._apply_fallback_score(job_id, reason=str(e))
 
 
 ats_worker_queue = ATSWorkerQueue(max_concurrency=2)
