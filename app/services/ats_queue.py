@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Optional, Set
+from typing import Optional, Set, List
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
@@ -23,19 +23,28 @@ class ATSWorkerQueue:
         self.queue: asyncio.Queue[int] = asyncio.Queue()
         self.processing_job_ids: Set[int] = set()
         self.max_concurrency = max_concurrency
-        self.workers: list[asyncio.Task] = []
+        self.workers: List[asyncio.Task] = []
         self._running = False
         self._lock = asyncio.Lock()
 
+    async def ensure_running(self):
+        """Ensures that background workers are active and healthy."""
+        async with self._lock:
+            # Clean up dead worker tasks if any
+            self.workers = [t for t in self.workers if not t.done()]
+            if not self._running or len(self.workers) < self.max_concurrency:
+                self._running = True
+                needed = self.max_concurrency - len(self.workers)
+                for _ in range(needed):
+                    idx = len(self.workers) + 1
+                    task = asyncio.create_task(self._worker(f"ats-worker-{idx}"))
+                    self.workers.append(task)
+                logger.info(f"ATS Worker Queue active with {len(self.workers)} workers.")
+
     async def start(self):
-        """Starts worker tasks."""
-        if self._running:
-            return
-        self._running = True
-        for i in range(self.max_concurrency):
-            task = asyncio.create_task(self._worker(f"ats-worker-{i+1}"))
-            self.workers.append(task)
-        logger.info(f"ATS Worker Queue started with {self.max_concurrency} background workers.")
+        """Starts worker tasks and recovers unanalyzed jobs from DB."""
+        await self.ensure_running()
+        asyncio.create_task(self._recover_pending_jobs())
 
     async def shutdown(self):
         """Stops workers gracefully."""
@@ -47,13 +56,39 @@ class ATSWorkerQueue:
         logger.info("ATS Worker Queue shut down.")
 
     async def enqueue(self, job_id: int):
-        """Enqueues a job ID for background ATS processing if not already queued/processing."""
+        """Enqueues a job ID for background ATS processing, ensuring workers are running."""
+        await self.ensure_running()
         async with self._lock:
             if job_id in self.processing_job_ids:
                 return
             self.processing_job_ids.add(job_id)
             await self.queue.put(job_id)
             logger.info(f"Enqueued job {job_id} for background ATS processing (Queue size: {self.queue.qsize()})")
+
+    async def _recover_pending_jobs(self):
+        """Checks DB on startup and enqueues jobs that have missing analysis or pending ATS."""
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Job)
+                    .options(selectinload(Job.analysis), selectinload(Job.application))
+                )
+                jobs = result.scalars().all()
+                recovered = 0
+                for job in jobs:
+                    needs_ats = (
+                        not job.analysis
+                        or not job.application
+                        or job.application.score is None
+                        or job.application.status == "ANALYZING"
+                    )
+                    if needs_ats:
+                        await self.enqueue(job.id)
+                        recovered += 1
+                if recovered > 0:
+                    logger.info(f"Recovered and enqueued {recovered} pending/unscored jobs for ATS.")
+        except Exception as e:
+            logger.warning(f"Could not auto-recover pending jobs on startup: {e}")
 
     async def _worker(self, worker_name: str):
         """Worker loop picking jobs from queue and executing ATS pipeline."""
@@ -62,6 +97,10 @@ class ATSWorkerQueue:
                 job_id = await self.queue.get()
             except asyncio.CancelledError:
                 break
+            except Exception as get_err:
+                logger.error(f"[{worker_name}] Queue get error: {get_err}")
+                await asyncio.sleep(1)
+                continue
 
             try:
                 logger.info(f"[{worker_name}] Processing ATS for job {job_id}...")
@@ -114,7 +153,7 @@ class ATSWorkerQueue:
                 # 3. Calculate ATS Match
                 match_data = None
                 try:
-                    match_data = await matching_service.match_job_profile(db, job.id)
+                    match_data = await matching_service.match_job_profile(db=db, job_id=job.id)
                 except Exception as match_err:
                     logger.warning(f"Skipping ATS match for job {job_id}: {match_err}")
 
@@ -134,7 +173,6 @@ class ATSWorkerQueue:
                     # 5. If high match, generate personalized application email draft
                     if match_data.score >= 80:
                         try:
-                            # Fetch user profile
                             res_prof = await db.execute(
                                 select(UserProfile)
                                 .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
@@ -151,7 +189,7 @@ class ATSWorkerQueue:
                             logger.warning(f"Could not generate auto-draft for job {job.id}: {draft_err}")
 
                 await db.commit()
-                logger.info(f"Successfully finished ATS processing for job {job_id} (Score: {getattr(app, 'score', 'N/A')})")
+                logger.info(f"Finished ATS processing for job {job_id}: {job.title} (Score: {getattr(app, 'score', 'N/A')})")
 
             except Exception as e:
                 logger.error(f"Failed ATS pipeline for job {job_id}: {e}")
