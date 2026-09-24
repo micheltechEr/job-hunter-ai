@@ -20,6 +20,8 @@ class UserProfile(Base):
     certifications = Column(JSON, nullable=True)  # List of strings
     location = Column(String(255), nullable=True)
     work_mode = Column(String(50), nullable=True) # Remote, Hybrid, On-site
+    seniority_level = Column(String(50), nullable=True) # Junior, Pleno, Senior, Estagio, etc.
+    years_of_experience = Column(Float, nullable=True) # e.g. 3.5
     professional_goals = Column(Text, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

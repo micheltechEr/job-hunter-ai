@@ -1,20 +1,22 @@
 import os
 import shutil
 import logging
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import get_db
 from app.config import settings
-from app.models.db_models import Resume
+from app.models.db_models import Resume, UserProfile
 from app.services.resume_service import (
     calculate_sha256,
     extract_text_from_pdf,
     parse_resume_content,
-    update_user_profile_from_parsed_resume
+    update_user_profile_from_parsed_resume,
+    tailor_and_save_resume_for_job
 )
-from app.schemas.schemas import ResumeResponse
+from app.schemas.schemas import ResumeResponse, UserProfileResponse, UpdateProfileRolesRequest
 
 router = APIRouter()
 logger = logging.getLogger("job_hunter.api.resumes")
@@ -104,6 +106,40 @@ async def list_resumes(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Resume))
     return result.scalars().all()
 
+@router.get("/profile", response_model=Optional[UserProfileResponse])
+async def get_current_user_profile(db: AsyncSession = Depends(get_db)):
+    """Retrieves current user profile information including target roles and location."""
+    result = await db.execute(select(UserProfile).limit(1))
+    profile = result.scalars().first()
+    if not profile:
+        return None
+    return profile
+
+@router.post("/profile/roles", response_model=UserProfileResponse)
+async def update_profile_roles(payload: UpdateProfileRolesRequest, db: AsyncSession = Depends(get_db)):
+    """Updates target desired roles and optionally location / seniority on the user profile."""
+    result = await db.execute(select(UserProfile).limit(1))
+    profile = result.scalars().first()
+    clean_roles = [r.strip() for r in payload.desired_roles if r and r.strip()]
+    if not profile:
+        profile = UserProfile(
+            name="Candidato",
+            desired_roles=clean_roles,
+            location=payload.location or "Brasil",
+            seniority_level=payload.seniority_level or "Junior"
+        )
+        db.add(profile)
+    else:
+        profile.desired_roles = clean_roles
+        if payload.location:
+            profile.location = payload.location.strip()
+        if payload.seniority_level:
+            profile.seniority_level = payload.seniority_level.strip()
+
+    await db.commit()
+    await db.refresh(profile)
+    return profile
+
 @router.get("/{resume_id}", response_model=ResumeResponse)
 async def get_resume(resume_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Resume).where(Resume.id == resume_id))
@@ -111,6 +147,57 @@ async def get_resume(resume_id: int, db: AsyncSession = Depends(get_db)):
     if not resume:
         raise HTTPException(status_code=404, detail="Currículo não encontrado.")
     return resume
+
+
+@router.get("/{resume_id}/file")
+async def get_resume_file(resume_id: int, db: AsyncSession = Depends(get_db)):
+    """Serves the PDF resume file inline for in-browser preview or download."""
+    result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    resume = result.scalars().first()
+    if not resume or not resume.file_path or not os.path.exists(resume.file_path):
+        raise HTTPException(status_code=404, detail="Arquivo PDF do currículo não encontrado.")
+
+    return FileResponse(
+        resume.file_path,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{resume.filename}"'
+        }
+    )
+
+
+@router.get("/{resume_id}/preview")
+async def get_resume_preview(resume_id: int, db: AsyncSession = Depends(get_db)):
+    """Returns structured metadata and file URL for rendering rich CV preview."""
+    result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    resume = result.scalars().first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Currículo não encontrado.")
+
+    return {
+        "id": resume.id,
+        "filename": resume.filename,
+        "version_name": resume.version_name,
+        "file_url": f"/api/resumes/{resume.id}/file",
+        "parsed_data": resume.parsed_data or {},
+        "created_at": resume.created_at
+    }
+
+
+@router.post("/tailor/{job_id}", response_model=ResumeResponse)
+async def tailor_resume_endpoint(job_id: int, db: AsyncSession = Depends(get_db)):
+    """Creates an AI-adapted, ATS-optimized PDF resume tailored specifically for the target job."""
+    try:
+        resume = await tailor_and_save_resume_for_job(db, job_id)
+        return resume
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Failed to tailor resume for job {job_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao adaptar currículo para a vaga: {str(e)}"
+        )
 
 @router.delete("/{resume_id}", status_code=status.HTTP_200_OK)
 async def delete_resume(resume_id: int, db: AsyncSession = Depends(get_db)):

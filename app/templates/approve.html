@@ -59,13 +59,134 @@
                 </div>
             </div>
 
-            <!-- AUTO SCRAPE PANEL -->
-            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
-                <h2 class="text-lg font-semibold mb-2 font-medium">Busca Automática</h2>
-                <p class="text-xs text-gray-500 mb-3">Varre vagas no LinkedIn, Programathor e Gupy aplicando o filtro ATS &ge; 80%.</p>
-                <button id="btn-trigger-scrape" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded text-sm font-medium transition duration-200">
-                    Buscar Vagas Agora
-                </button>
+            <!-- AUTO SCRAPE / ROLE SEARCH PANEL -->
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200 space-y-3.5">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-base font-bold text-gray-900 flex items-center gap-1.5">
+                        <span>🎯</span> Busca de Vagas por Cargo
+                    </h2>
+                    <span class="text-[10px] bg-indigo-50 text-indigo-700 font-mono px-2 py-0.5 rounded border border-indigo-100 font-medium">Scraper + ATS</span>
+                </div>
+
+                <!-- CV Seniority Gating Badge -->
+                <div id="cv-seniority-card" class="bg-indigo-50/70 border border-indigo-200 rounded-lg p-2.5 text-xs text-indigo-900 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <span class="text-base">👤</span>
+                        <div>
+                            <span class="text-[10px] uppercase font-bold text-indigo-600 block">Nível Detectado no Currículo</span>
+                            <span id="cv-seniority-label" class="font-bold text-xs text-gray-900">Júnior / Pleno (~3.5 anos)</span>
+                        </div>
+                    </div>
+                    <span class="text-[10px] bg-indigo-200/80 text-indigo-950 font-semibold px-2 py-0.5 rounded font-mono">Filtro Ativo</span>
+                </div>
+
+                <p class="text-xs text-gray-500 leading-relaxed">
+                    Informe o cargo desejado para varrer LinkedIn, Gupy e Programathor. As vagas encontradas entram automaticamente no pipeline de scoring ATS.
+                </p>
+
+                <!-- Input de Cargo -->
+                <div>
+                    <label for="scrape-role-input" class="block text-[11px] font-bold uppercase text-gray-600 mb-1">
+                        Cargo Desejado <span class="text-red-500">*</span>
+                    </label>
+                    <div class="relative">
+                        <input 
+                            type="text" 
+                            id="scrape-role-input" 
+                            placeholder="Ex: Desenvolvedor Python, Engenheiro de IA, DevOps..." 
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-gray-50/50 pr-8 transition"
+                        >
+                        <span class="absolute right-2.5 top-2 text-gray-400 text-xs">💼</span>
+                    </div>
+
+                    <!-- Badges / Tags de Sugestão e Perfil -->
+                    <div class="mt-2" id="scrape-role-suggestions-container">
+                        <div class="flex flex-wrap gap-1 items-center text-[11px]" id="scrape-role-badges">
+                            <span class="text-gray-400 text-[10px] mr-0.5">Sugestões:</span>
+                            <button type="button" onclick="setScrapeRole('Desenvolvedor Full Stack Jr')" class="bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-2 py-0.5 rounded border border-gray-200 transition text-[11px]">Full Stack Jr</button>
+                            <button type="button" onclick="setScrapeRole('Desenvolvedor Python Jr')" class="bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-2 py-0.5 rounded border border-gray-200 transition text-[11px]">Python Jr</button>
+                            <button type="button" onclick="setScrapeRole('Desenvolvedor Full Stack Pleno')" class="bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-2 py-0.5 rounded border border-gray-200 transition text-[11px]">Pleno</button>
+                            <button type="button" onclick="setScrapeRole('Desenvolvedor Frontend Jr')" class="bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-2 py-0.5 rounded border border-gray-200 transition text-[11px]">Frontend Jr</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Localização, Senioridade e Limite -->
+                <div class="grid grid-cols-3 gap-2">
+                    <div>
+                        <label for="scrape-location-input" class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Localização</label>
+                        <input 
+                            type="text" 
+                            id="scrape-location-input" 
+                            value="Brasil" 
+                            placeholder="Ex: Brasil, SP..." 
+                            class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
+                        >
+                    </div>
+                    <div>
+                        <label for="scrape-seniority-select" class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Senioridade</label>
+                        <select id="scrape-seniority-select" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 bg-gray-50/50">
+                            <option value="auto" selected>🎯 Base CV</option>
+                            <option value="Junior">🌱 Júnior</option>
+                            <option value="Pleno">⚡ Pleno</option>
+                            <option value="Junior/Pleno">🚀 Jr / Pleno</option>
+                            <option value="Senior">👑 Sênior</option>
+                            <option value="All">🌐 Todas</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="scrape-limit-select" class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Vagas/Portal</label>
+                        <select id="scrape-limit-select" class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 bg-gray-50/50">
+                            <option value="2">2 vagas</option>
+                            <option value="5" selected>5 vagas</option>
+                            <option value="10">10 vagas</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Plataformas -->
+                <div>
+                    <label class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Portais Alvo</label>
+                    <div class="grid grid-cols-3 gap-1.5">
+                        <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
+                            <input type="checkbox" id="scrape-plat-linkedin" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                            <span class="text-[11px] text-gray-700 font-medium">LinkedIn</span>
+                        </label>
+                        <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
+                            <input type="checkbox" id="scrape-plat-gupy" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                            <span class="text-[11px] text-gray-700 font-medium">Gupy</span>
+                        </label>
+                        <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
+                            <input type="checkbox" id="scrape-plat-programathor" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                            <span class="text-[11px] text-gray-700 font-medium">Programathor</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Excluir Sênior Checkbox -->
+                <div class="flex items-center gap-2 pt-0.5">
+                    <input type="checkbox" id="scrape-exclude-senior" checked class="rounded text-indigo-600 focus:ring-indigo-500">
+                    <label for="scrape-exclude-senior" class="text-[11px] text-gray-700 font-medium cursor-pointer select-none">
+                        🚫 Excluir vagas Sênior/Lead/Staff (Gating ATS estrito)
+                    </label>
+                </div>
+
+                <!-- Salvar no Perfil -->
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="scrape-save-profile" checked class="rounded text-indigo-600 focus:ring-indigo-500">
+                    <label for="scrape-save-profile" class="text-[11px] text-gray-600 cursor-pointer select-none">
+                        Salvar preferências no meu perfil
+                    </label>
+                </div>
+
+                <!-- Botão e Feedback -->
+                <div class="space-y-2 pt-1">
+                    <button id="btn-trigger-scrape" class="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white py-2.5 px-4 rounded text-sm font-semibold transition duration-200 shadow-sm flex items-center justify-center gap-2">
+                        <span id="scrape-btn-icon">🚀</span>
+                        <span id="scrape-btn-text">Buscar Vagas Agora</span>
+                    </button>
+                    <div id="scrape-status-banner" class="hidden text-xs p-2.5 rounded-lg border flex flex-col gap-1 transition-all"></div>
+                </div>
             </div>
 
             <!-- MANUALLY ADD JOB -->
@@ -117,9 +238,20 @@
                     </div>
                 </div>
 
-                <!-- Instant Search Input -->
-                <div class="mb-3">
-                    <input type="text" id="job-search-input" placeholder="🔍 Pesquisar em tempo real por cargo, empresa, stack..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-gray-50/50">
+                <!-- Instant Search & Seniority Filter Row -->
+                <div class="mb-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div class="md:col-span-2">
+                        <input type="text" id="job-search-input" placeholder="🔍 Pesquisar em tempo real por cargo, empresa, stack..." class="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-gray-50/50">
+                    </div>
+                    <div>
+                        <select id="filter-seniority-select" class="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-xs focus:ring-2 focus:ring-indigo-500 bg-gray-50/50 text-gray-700 font-medium">
+                            <option value="all">Todas</option>
+                            <option value="exclude_senior" selected>🌱 Ocultar Sênior</option>
+                            <option value="junior">Apenas Jr</option>
+                            <option value="pleno">Apenas Pleno</option>
+                            <option value="senior">Apenas Sênior</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div id="jobs-list" class="space-y-3 max-h-[75vh] overflow-y-auto">
@@ -177,10 +309,23 @@
                         </div>
                     </div>
 
-                    <!-- CURRICULO RECOMENDADO -->
-                    <div class="text-xs bg-indigo-50 border border-indigo-100 p-2.5 rounded text-indigo-900 flex justify-between items-center">
-                        <span class="font-semibold">Currículo Selecionado:</span>
-                        <span id="app-resume" class="font-bold font-mono bg-white px-2 py-0.5 rounded border border-indigo-200">BACKEND.PDF</span>
+                    <!-- CURRICULO RECOMENDADO & ADAPTAÇÃO -->
+                    <div class="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 p-3 rounded-lg text-indigo-900 space-y-2.5">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs font-semibold text-gray-600">Currículo Anexo:</span>
+                                <span id="app-resume" class="font-bold font-mono text-xs bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-700">PADRÃO.PDF</span>
+                            </div>
+                            <button id="btn-preview-active-cv" type="button" onclick="previewCurrentAppResume()" class="text-xs bg-white hover:bg-indigo-100 text-indigo-700 font-bold px-2.5 py-1 rounded border border-indigo-300 transition flex items-center shadow-xs">
+                                👁️ Pré-visualizar PDF
+                            </button>
+                        </div>
+                        <div class="pt-2 flex justify-between items-center border-t border-indigo-200/60">
+                            <span class="text-[11px] text-gray-600">Adapte o CV com IA para esta vaga:</span>
+                            <button id="btn-tailor-cv" type="button" onclick="tailorCvForCurrentJob()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1 rounded shadow-xs transition flex items-center space-x-1">
+                                <span id="btn-tailor-cv-text">✨ Adaptar CV para Vaga</span>
+                            </button>
+                        </div>
                     </div>
 
                     <!-- FORM DISPARO -->
@@ -260,30 +405,138 @@
             }
         };
 
-        // Trigger background crawling
+        // Helpers for Role Input & Badges
+        function setScrapeRole(roleName) {
+            const input = document.getElementById('scrape-role-input');
+            if (input) {
+                input.value = roleName;
+                input.focus();
+            }
+        }
+
+        async function loadProfileRoles() {
+            try {
+                const res = await fetch('/api/resumes/profile');
+                if (res.ok) {
+                    const prof = await res.json();
+                    if (prof) {
+                        if (prof.seniority_level) {
+                            const senText = `${prof.seniority_level} ${prof.years_of_experience ? `(~${prof.years_of_experience} anos)` : ''}`;
+                            const senBadge = document.getElementById('cv-seniority-label');
+                            if (senBadge) senBadge.innerText = senText;
+                        }
+                        if (prof.desired_roles && prof.desired_roles.length > 0) {
+                            const badgesCont = document.getElementById('scrape-role-badges');
+                            if (badgesCont) {
+                                const customBadges = prof.desired_roles.map(r => 
+                                    `<button type="button" onclick="setScrapeRole('${r.replace(/'/g, "\\'")}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 transition font-medium text-[11px]" title="Cargo salvo no perfil">★ ${r}</button>`
+                                ).join('');
+                                badgesCont.innerHTML = `<span class="text-gray-400 text-[10px] mr-0.5">Seu perfil:</span>` + customBadges;
+                            }
+                            const roleInput = document.getElementById('scrape-role-input');
+                            if (roleInput && !roleInput.value) {
+                                roleInput.value = prof.desired_roles[0];
+                            }
+                        }
+                        if (prof.location && document.getElementById('scrape-location-input')) {
+                            document.getElementById('scrape-location-input').value = prof.location;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.debug("Perfil não carregado ainda:", e);
+            }
+        }
+
+        // Trigger background crawling with custom role and parameters
         document.getElementById('btn-trigger-scrape').onclick = async () => {
             const btn = document.getElementById('btn-trigger-scrape');
-            const orig = btn.innerText;
-            btn.innerText = "Iniciando varredura...";
+            const icon = document.getElementById('scrape-btn-icon');
+            const text = document.getElementById('scrape-btn-text');
+            const banner = document.getElementById('scrape-status-banner');
+            
+            const roleVal = document.getElementById('scrape-role-input').value.trim();
+            const locationVal = document.getElementById('scrape-location-input').value.trim() || "Brasil";
+            const seniorityVal = document.getElementById('scrape-seniority-select')?.value || 'auto';
+            const limitVal = parseInt(document.getElementById('scrape-limit-select').value) || 5;
+            const excludeSenior = document.getElementById('scrape-exclude-senior')?.checked !== false;
+            const saveProfile = document.getElementById('scrape-save-profile').checked;
+
+            const platforms = [];
+            if (document.getElementById('scrape-plat-linkedin').checked) platforms.push('linkedin');
+            if (document.getElementById('scrape-plat-gupy').checked) platforms.push('gupy');
+            if (document.getElementById('scrape-plat-programathor').checked) platforms.push('programathor');
+
+            if (platforms.length === 0) {
+                alert("Por favor, selecione ao menos uma plataforma de busca.");
+                return;
+            }
+
+            if (!roleVal) {
+                alert("Por favor, informe o cargo ou palavra-chave desejada para a busca.");
+                document.getElementById('scrape-role-input').focus();
+                return;
+            }
+
+            const origText = text.innerText;
+            text.innerText = "Iniciando varredura...";
+            icon.innerText = "⏳";
             btn.disabled = true;
+
             try {
-                const res = await fetch('/api/jobs/scrape/trigger', { method: 'POST' });
+                const payload = {
+                    role: roleVal,
+                    location: locationVal,
+                    seniority: seniorityVal === 'auto' ? null : seniorityVal,
+                    platforms: platforms,
+                    limit_per_platform: limitVal,
+                    exclude_senior: excludeSenior,
+                    save_to_profile: saveProfile
+                };
+
+                const res = await fetch('/api/jobs/scrape/trigger', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
                 if (res.ok) {
-                    alert("Varredura iniciada no segundo plano! As vagas encontradas e avaliadas pelo ATS serão carregadas em instantes.");
+                    const data = await res.json();
+                    banner.className = "text-xs p-3 rounded-lg border bg-emerald-50 border-emerald-200 text-emerald-800 flex flex-col gap-1 transition-all";
+                    banner.innerHTML = `
+                        <div class="flex items-center justify-between font-bold">
+                            <span class="flex items-center gap-1.5"><span class="animate-pulse">🟢</span> Busca em andamento</span>
+                            <span class="text-[10px] font-mono bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded">Scraping ativo</span>
+                        </div>
+                        <p class="text-[11px] text-emerald-700 mt-0.5">${data.message}</p>
+                        <p class="text-[10px] text-emerald-600 italic">As novas vagas e o cálculo ATS aparecerão automaticamente no painel em instantes...</p>
+                    `;
+                    banner.classList.remove('hidden');
+
+                    if (saveProfile) {
+                        loadProfileRoles();
+                    }
+
+                    // Poll for fresh jobs periodically
                     let checkCount = 0;
                     const checkInterval = setInterval(() => {
                         fetchJobs();
                         checkCount++;
-                        if (checkCount >= 5) clearInterval(checkInterval);
-                    }, 8000);
+                        if (checkCount >= 10) {
+                            clearInterval(checkInterval);
+                            banner.className = "text-xs p-2.5 rounded-lg border bg-gray-50 border-gray-200 text-gray-600 flex items-center justify-between";
+                            banner.innerHTML = `<span>Varredura concluída. Verifique a lista de vagas.</span> <button onclick="this.parentElement.classList.add('hidden')" class="text-gray-400 hover:text-gray-600">&times;</button>`;
+                        }
+                    }, 5000);
                 } else {
                     const err = await res.json();
-                    alert("Erro ao disparar busca automática: " + (err.detail || "Consulte logs do backend."));
+                    alert("Erro ao disparar busca: " + (err.detail || "Consulte os logs do backend."));
                 }
             } catch (err) {
                 alert("Erro ao comunicar com o servidor: " + err);
             } finally {
-                btn.innerText = orig;
+                text.innerText = origText;
+                icon.innerText = "🚀";
                 btn.disabled = false;
             }
         };
@@ -300,10 +553,15 @@
                 }
                 container.innerHTML = `<h3 class="font-bold mb-1">Currículos Ativos:</h3>` + list.map(cv => `
                     <div class="bg-gray-100 hover:bg-gray-150 rounded px-2.5 py-1.5 flex justify-between items-center text-gray-700 font-mono text-[11px] border border-gray-200">
-                        <span class="truncate max-w-[180px] font-semibold">${cv.version_name.toUpperCase()}: ${cv.filename}</span>
-                        <button onclick="deleteResume(${cv.id}, '${cv.version_name}')" class="text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition" title="Remover Currículo">
-                            &times;
-                        </button>
+                        <span class="truncate max-w-[150px] font-semibold" title="${cv.filename}">${cv.version_name.toUpperCase()}: ${cv.filename}</span>
+                        <div class="flex items-center space-x-1">
+                            <button onclick="previewResumeById(${cv.id}, '${cv.filename}', '${cv.version_name}')" class="text-indigo-600 hover:text-indigo-800 font-bold px-1.5 py-0.5 rounded hover:bg-indigo-50 transition" title="Pré-visualizar Currículo">
+                                👁️
+                            </button>
+                            <button onclick="deleteResume(${cv.id}, '${cv.version_name}')" class="text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition" title="Remover Currículo">
+                                &times;
+                            </button>
+                        </div>
                     </div>
                 `).join('');
             } catch (err) {
@@ -353,6 +611,7 @@
                     fileInput.value = "";
                     document.getElementById('cv-version').value = "";
                     fetchResumes();
+                    loadProfileRoles();
                 } else {
                     const err = await res.json();
                     alert("Erro no upload do currículo: " + (err.detail || "Erro inesperado."));
@@ -449,6 +708,7 @@
 
             const onlyAts80 = document.getElementById('toggle-ats-filter').checked;
             const searchVal = (document.getElementById('job-search-input')?.value || '').toLowerCase().trim();
+            const seniorityFilter = document.getElementById('filter-seniority-select')?.value || 'exclude_senior';
 
             let displayedJobs = cachedJobsList.filter(j => {
                 const app = cachedAppsMap[j.id] || j.application;
@@ -457,6 +717,24 @@
                 if (onlyAts80) {
                     const passScore = app && app.score !== null && app.score >= 80;
                     if (!passScore) return false;
+                }
+
+                // Seniority Filter
+                const jobIsSenior = (j.analysis && j.analysis.seniority && j.analysis.seniority.toLowerCase().includes('senior')) ||
+                                    (/\b(s[êe]nior|sr\.?|lead|tech\s+lead|staff|principal|especialista)\b/i.test(j.title));
+                
+                if (seniorityFilter === 'exclude_senior') {
+                    if (jobIsSenior) return false;
+                } else if (seniorityFilter === 'junior') {
+                    const isJunior = (j.analysis && j.analysis.seniority && (j.analysis.seniority.toLowerCase().includes('junior') || j.analysis.seniority.toLowerCase().includes('estagio'))) ||
+                                     (/\b(j[uú]nior|jr\.?|est[aá]gio|trainee)\b/i.test(j.title));
+                    if (jobIsSenior || !isJunior) return false;
+                } else if (seniorityFilter === 'pleno') {
+                    const isPleno = (j.analysis && j.analysis.seniority && j.analysis.seniority.toLowerCase().includes('pleno')) ||
+                                    (/\b(pleno|mid|pl\.?)\b/i.test(j.title));
+                    if (jobIsSenior || !isPleno) return false;
+                } else if (seniorityFilter === 'senior') {
+                    if (!jobIsSenior) return false;
                 }
 
                 // Search Filter
@@ -579,6 +857,7 @@
         }
 
         document.getElementById('job-search-input')?.addEventListener('input', renderFilteredJobs);
+        document.getElementById('filter-seniority-select')?.addEventListener('change', renderFilteredJobs);
         document.getElementById('toggle-ats-filter').onchange = () => {
             renderFilteredJobs();
         };
@@ -631,7 +910,18 @@
             document.getElementById('app-gaps').innerHTML = gapsList.map(r => `<li>${r}</li>`).join('') || '<li>Nenhum gap crítico detectado</li>';
 
             // CV Recommended
-            document.getElementById('app-resume').innerText = ((matchMetrics && matchMetrics.recommended_resume_name) || 'PADRÃO').toUpperCase() + '.PDF';
+            currentActiveJobId = (jobDetails && jobDetails.id) || null;
+            currentActiveResumeId = (appMetrics && appMetrics.resume_id) || (matchMetrics && matchMetrics.recommended_resume_id) || null;
+
+            const resumeName = ((matchMetrics && matchMetrics.recommended_resume_name) || 'PADRÃO').toUpperCase();
+            const isTailored = resumeName.includes('TAILORED') || (appMetrics && appMetrics.resume_id && resumeName.includes('TAILORED'));
+            const cvBadge = document.getElementById('app-resume');
+            cvBadge.innerText = `${isTailored ? '✨ ' : ''}${resumeName}.PDF`;
+            if (isTailored) {
+                cvBadge.className = "font-bold font-mono text-xs bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 shadow-xs";
+            } else {
+                cvBadge.className = "font-bold font-mono text-xs bg-white px-2 py-0.5 rounded border border-indigo-200 text-indigo-700";
+            }
 
             // Fill form fields
             document.getElementById('email-recipient').value = appMetrics.recipient_email || '';
@@ -673,23 +963,21 @@
                 
                 const appMetrics = await res.json();
 
-                // Load detail job matching metrics
-                let matchMetrics = {};
-                try {
-                    const resMatch = await fetch(`/api/jobs/${jobId}/match`, { method: 'POST' });
-                    if (resMatch.ok) {
-                        matchMetrics = await resMatch.json();
-                    }
-                } catch (e) {
-                    console.warn("Could not load secondary match metrics:", e);
-                }
-
                 // Get job details
                 let jobDetails = localJob;
                 if (!jobDetails) {
                     const resJob = await fetch(`/api/jobs/${jobId}`);
                     jobDetails = await resJob.json();
                 }
+
+                // Construct match summary directly from application metrics
+                const matchMetrics = {
+                    score: appMetrics.score,
+                    fit: appMetrics.fit,
+                    explanation: appMetrics.notes || "Análise preliminar estruturada do perfil e da vaga.",
+                    matched_requirements: [],
+                    missing_requirements: []
+                };
 
                 // Save to local cache for instant reopening
                 selectedJobDetailsCache[jobId] = {
@@ -781,12 +1069,209 @@
             }
         };
 
+        // Resume Preview & Tailoring Handlers
+        function openResumePreviewModal(resumeId, title, version) {
+            currentActiveResumeId = resumeId;
+            const modal = document.getElementById('resume-preview-modal');
+            modal.classList.remove('hidden');
+            document.getElementById('modal-resume-title').innerText = title || 'Currículo Profissional';
+            document.getElementById('modal-resume-badge').innerText = (version || 'ATS').toUpperCase();
+
+            const fileUrl = `/api/resumes/${resumeId}/file`;
+            document.getElementById('resume-preview-iframe').src = fileUrl;
+            document.getElementById('modal-resume-download').href = fileUrl;
+
+            loadResumeStructure(resumeId);
+            switchResumeTab('pdf');
+        }
+
+        function closeResumePreviewModal() {
+            const modal = document.getElementById('resume-preview-modal');
+            modal.classList.add('hidden');
+            document.getElementById('resume-preview-iframe').src = '';
+        }
+
+        function switchResumeTab(tab) {
+            const tabPdf = document.getElementById('modal-tab-pdf');
+            const tabStructure = document.getElementById('modal-tab-structure');
+            const btnPdf = document.getElementById('tab-btn-pdf');
+            const btnStructure = document.getElementById('tab-btn-structure');
+
+            if (tab === 'pdf') {
+                tabPdf.classList.remove('hidden');
+                tabStructure.classList.add('hidden');
+                btnPdf.className = "py-2.5 px-4 border-b-2 border-indigo-600 text-indigo-700 font-bold";
+                btnStructure.className = "py-2.5 px-4 border-b-2 border-transparent hover:text-gray-900 transition";
+            } else {
+                tabPdf.classList.add('hidden');
+                tabStructure.classList.remove('hidden');
+                btnPdf.className = "py-2.5 px-4 border-b-2 border-transparent hover:text-gray-900 transition";
+                btnStructure.className = "py-2.5 px-4 border-b-2 border-indigo-600 text-indigo-700 font-bold";
+            }
+        }
+
+        async function loadResumeStructure(resumeId) {
+            const container = document.getElementById('structured-resume-content');
+            container.innerHTML = `<div class="flex items-center space-x-2 text-gray-500"><div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div><span>Carregando estrutura...</span></div>`;
+            try {
+                const res = await fetch(`/api/resumes/${resumeId}/preview`);
+                if (!res.ok) throw new Error("Falha ao ler dados estruturados");
+                const data = await res.json();
+                const p = data.parsed_data || {};
+
+                let html = `
+                    <div class="border-b pb-3 mb-3">
+                        <h2 class="text-base font-bold text-gray-900">${p.name || 'Candidato'}</h2>
+                        <div class="text-indigo-600 font-semibold text-xs">${p.target_role || (p.desired_roles && p.desired_roles.join(', ')) || 'Desenvolvedor'}</div>
+                        <div class="text-gray-500 text-[11px]">${p.contact_info || p.location || ''}</div>
+                    </div>
+                `;
+
+                if (p.summary) {
+                    html += `
+                        <div>
+                            <h3 class="font-bold text-gray-700 uppercase tracking-wider text-[11px] mb-1">Resumo Executivo (Adaptado para a Vaga)</h3>
+                            <p class="bg-gray-50 p-2.5 rounded border text-gray-700 leading-relaxed">${p.summary}</p>
+                        </div>
+                    `;
+                }
+
+                if (p.top_skills && p.top_skills.length > 0) {
+                    html += `
+                        <div>
+                            <h3 class="font-bold text-gray-700 uppercase tracking-wider text-[11px] mb-1">Competências Principais</h3>
+                            <div class="flex flex-wrap gap-1">
+                                ${p.top_skills.map(s => `<span class="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-200 text-[10px] font-semibold">${s}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                if (p.experiences && p.experiences.length > 0) {
+                    html += `<div><h3 class="font-bold text-gray-700 uppercase tracking-wider text-[11px] mb-2">Experiências Destacadas</h3><div class="space-y-3">`;
+                    p.experiences.forEach(e => {
+                        html += `
+                            <div class="border-l-2 border-indigo-400 pl-3 py-0.5">
+                                <div class="font-bold text-gray-900">${e.role} &mdash; <span class="text-gray-600 font-normal">${e.company}</span> <span class="text-gray-400 text-[10px]">(${e.period || (e.start_date + ' - ' + (e.end_date || 'Atual'))})</span></div>
+                                ${e.highlights ? `<ul class="list-disc list-inside mt-1 text-gray-600 space-y-0.5">${e.highlights.map(h => `<li>${h}</li>`).join('')}</ul>` : `<p class="text-gray-600">${e.description || ''}</p>`}
+                                ${e.technologies && e.technologies.length > 0 ? `<div class="mt-1 text-[10px] text-gray-500 italic">Techs: ${e.technologies.join(', ')}</div>` : ''}
+                            </div>
+                        `;
+                    });
+                    html += `</div></div>`;
+                }
+
+                container.innerHTML = html;
+            } catch (err) {
+                container.innerHTML = `<p class="text-red-500">Erro ao carregar estrutura: ${err.message}</p>`;
+            }
+        }
+
+        function previewResumeById(resumeId, filename, version) {
+            openResumePreviewModal(resumeId, filename, version);
+        }
+
+        function previewCurrentAppResume() {
+            if (!currentActiveResumeId) {
+                alert("Nenhum currículo selecionado para esta candidatura.");
+                return;
+            }
+            openResumePreviewModal(currentActiveResumeId, "Currículo da Candidatura", "ANEXO");
+        }
+
+        async function tailorCvForCurrentJob() {
+            if (!currentActiveJobId) {
+                alert("Nenhuma vaga selecionada.");
+                return;
+            }
+
+            const btn = document.getElementById('btn-tailor-cv');
+            const txt = document.getElementById('btn-tailor-cv-text');
+            const origText = txt.innerText;
+            btn.disabled = true;
+            txt.innerText = "Adaptando CV com IA...";
+
+            try {
+                const res = await fetch(`/api/jobs/${currentActiveJobId}/tailor-resume`, { method: 'POST' });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || "Erro ao adaptar currículo");
+                }
+                const tailoredResume = await res.json();
+                currentActiveResumeId = tailoredResume.id;
+
+                // Update UI badge
+                const resumeBadge = document.getElementById('app-resume');
+                resumeBadge.innerText = `✨ ${tailoredResume.version_name.toUpperCase()}.PDF`;
+                resumeBadge.className = "font-bold font-mono text-xs bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300 text-emerald-800 shadow-xs";
+
+                // Refresh sidebar resumes
+                fetchResumes();
+
+                // Open preview modal immediately for feedback
+                openResumePreviewModal(tailoredResume.id, tailoredResume.filename, tailoredResume.version_name);
+
+            } catch (err) {
+                alert("Erro ao adaptar currículo: " + err.message);
+            } finally {
+                btn.disabled = false;
+                txt.innerText = origText;
+            }
+        }
+
         // Init loads
         window.onload = () => {
             checkGmailStatus();
             fetchResumes();
+            loadProfileRoles();
             fetchJobs();
         };
     </script>
+
+    <!-- RESUME PREVIEW MODAL -->
+    <div id="resume-preview-modal" class="fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl h-[90vh] rounded-xl shadow-2xl flex flex-col overflow-hidden border border-gray-200">
+            <!-- Modal Header -->
+            <div class="p-4 bg-gray-50 border-b flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <span class="text-lg font-bold text-gray-800" id="modal-resume-title">Pré-visualização do Currículo</span>
+                    <span id="modal-resume-badge" class="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">PDF ATS</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <a id="modal-resume-download" href="#" target="_blank" download class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded transition flex items-center space-x-1 shadow-xs">
+                        <span>⬇️ Baixar PDF</span>
+                    </a>
+                    <button onclick="closeResumePreviewModal()" class="text-gray-400 hover:text-gray-600 font-bold text-2xl px-2 py-0.5 rounded hover:bg-gray-200 transition leading-none">
+                        &times;
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Tabs -->
+            <div class="flex border-b bg-gray-100 px-4 text-xs font-semibold text-gray-600 space-x-2">
+                <button id="tab-btn-pdf" onclick="switchResumeTab('pdf')" class="py-2.5 px-4 border-b-2 border-indigo-600 text-indigo-700 font-bold">
+                    📄 Documento PDF
+                </button>
+                <button id="tab-btn-structure" onclick="switchResumeTab('structure')" class="py-2.5 px-4 border-b-2 border-transparent hover:text-gray-900 transition">
+                    📋 Destaques & Estrutura ATS
+                </button>
+            </div>
+
+            <!-- Modal Content Body -->
+            <div class="flex-1 overflow-hidden bg-gray-100 p-2 relative">
+                <!-- PDF Iframe -->
+                <div id="modal-tab-pdf" class="w-full h-full">
+                    <iframe id="resume-preview-iframe" src="" class="w-full h-full rounded border border-gray-300 bg-white"></iframe>
+                </div>
+
+                <!-- Structured Highlights Tab -->
+                <div id="modal-tab-structure" class="w-full h-full bg-white rounded border border-gray-300 p-6 overflow-y-auto hidden text-xs text-gray-800 space-y-4">
+                    <div id="structured-resume-content">
+                        <!-- Loaded dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

@@ -25,7 +25,7 @@ class ATSWorkerQueue:
     3. Watchdog: Background task detects and resolves stalled jobs.
     """
 
-    def __init__(self, max_concurrency: int = 2):
+    def __init__(self, max_concurrency: int = 1):
         self.queue: asyncio.Queue[int] = asyncio.Queue()
         self.processing_job_ids: Set[int] = set()
         self.max_concurrency = max_concurrency
@@ -88,8 +88,9 @@ class ATSWorkerQueue:
                 jobs = result.scalars().all()
                 recovered = 0
                 for job in jobs:
+                    has_contingency = bool(job.application and job.application.notes and "Score automático de contingência" in job.application.notes)
                     needs_ats = (
-                        not job.analysis
+                        (not job.analysis and not has_contingency)
                         or not job.application
                         or job.application.score is None
                         or job.application.status == "ANALYZING"
@@ -106,7 +107,7 @@ class ATSWorkerQueue:
         """Periodic watchdog preventing any job from staying in 'ANALYZING' forever."""
         while self._running:
             try:
-                await asyncio.sleep(20)
+                await asyncio.sleep(60)
                 await self._recover_pending_jobs()
             except asyncio.CancelledError:
                 break
@@ -127,8 +128,8 @@ class ATSWorkerQueue:
 
             try:
                 logger.info(f"[{worker_name}] Processing ATS for job {job_id}...")
-                # Wrap with timeout per job (max 25s) to guarantee no worker hangs
-                await asyncio.wait_for(self._process_job_ats(job_id), timeout=25.0)
+                # Wrap with timeout per job (max 60s) to guarantee no worker hangs
+                await asyncio.wait_for(self._process_job_ats(job_id), timeout=60.0)
             except asyncio.TimeoutError:
                 logger.warning(f"[{worker_name}] ATS pipeline timed out for job {job_id}. Applying fallback score.")
                 await self._apply_fallback_score(job_id, reason="Tempo limite excedido na análise com IA")
@@ -139,6 +140,8 @@ class ATSWorkerQueue:
                 async with self._lock:
                     self.processing_job_ids.discard(job_id)
                 self.queue.task_done()
+                # Yield execution and pace background processing to keep LLM slots open for interactive UI requests
+                await asyncio.sleep(1.5)
 
     async def _apply_fallback_score(self, job_id: int, reason: str):
         """Emergency fallback ensuring a job NEVER remains stuck in 'ANALYZING' status."""
@@ -152,6 +155,27 @@ class ATSWorkerQueue:
                 job = res.scalars().first()
                 if not job:
                     return
+
+                # Ensure a fallback JobAnalysis exists so watchdog does not loop
+                if not job.analysis:
+                    res_ja = await db.execute(select(JobAnalysis).where(JobAnalysis.job_id == job.id))
+                    ja = res_ja.scalars().first()
+                    if not ja:
+                        ja = JobAnalysis(
+                            job_id=job.id,
+                            extracted_role=job.title or "Não especificado",
+                            seniority="N/A",
+                            location=job.location or "Remoto",
+                            work_mode=job.work_mode or "Remote",
+                            required_skills=[],
+                            nice_to_have=[],
+                            responsibilities=[],
+                            education=[],
+                            languages=[],
+                            experience_required=None,
+                            raw_json={"fallback": True, "reason": reason}
+                        )
+                        db.add(ja)
 
                 res_app = await db.execute(select(Application).where(Application.job_id == job.id))
                 app = res_app.scalars().first()
@@ -182,8 +206,8 @@ class ATSWorkerQueue:
                 if not job:
                     return
 
-                # Skip if already fully processed
-                if job.application and job.application.score is not None and job.application.status not in ("ANALYZING", None):
+                # Skip if already fully processed with valid analysis
+                if job.analysis and job.application and job.application.score is not None and job.application.status not in ("ANALYZING", None):
                     return
 
                 # 2. Extract Job Analysis if missing
@@ -267,4 +291,4 @@ class ATSWorkerQueue:
                 await self._apply_fallback_score(job_id, reason=str(e))
 
 
-ats_worker_queue = ATSWorkerQueue(max_concurrency=2)
+ats_worker_queue = ATSWorkerQueue(max_concurrency=1)

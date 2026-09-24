@@ -10,6 +10,7 @@ from app.models.db_models import Resume, UserProfile, Job, JobAnalysis
 from app.schemas.schemas import MatchResponse
 from app.services.embedding_service import embedding_service
 from app.services.llm_service import llm_service
+from app.services.scraper_service import is_senior_title
 
 logger = logging.getLogger("job_hunter.matching")
 
@@ -126,6 +127,10 @@ class MatchingService:
         matched_quick = [s for s in job_req_skills if any(u in s.lower() or s.lower() in u for u in user_techs)]
 
         # 6. Call LLM applying strict ATS methodology (streamlined prompt)
+        candidate_seniority = user_profile.seniority_level or "Junior"
+        candidate_exp_years = user_profile.years_of_experience or 0.0
+        job_is_senior = (job_analysis.seniority and "senior" in job_analysis.seniority.lower()) or is_senior_title(job.title)
+
         system_prompt = (
             "Você é um motor de triagem ATS (Applicant Tracking System) de TI altamente analítico e rigoroso.\n"
             "Avalie o candidato contra a vaga com a ponderação oficial:\n"
@@ -134,6 +139,9 @@ class MatchingService:
             "3. Responsabilidades & Domínio (15%): Entregas e arquitetura.\n"
             "4. Localização & Modalidade (10%): Remoto/Híbrido/Presencial.\n"
             "5. Diferenciais (10%): Nice to have e diferenciais.\n\n"
+            "REGRAS DE GATING DE SENIORIDADE:\n"
+            "- Se a vaga for Sênior/Lead/Staff e o candidato for Júnior ou Pleno com menos de 4 anos de experiência, DESQUALIFIQUE: pontuação máxima de 35%, fit='IGNORE', recommendation=False e declare o gap de senioridade nos risks.\n"
+            "- Vagas compatíveis com a senioridade real do candidato (Júnior/Pleno) devem ser avaliadas normalmente.\n\n"
             "Critérios de Classificação:\n"
             "- >= 80%: HIGH_MATCH (recommendation=True)\n"
             "- 60 a 79%: GOOD_MATCH (recommendation=False)\n"
@@ -145,6 +153,7 @@ class MatchingService:
         user_prompt = f"""
 CANDIDATO:
 Nome: {user_profile.name}
+Senioridade Real: {candidate_seniority} (~{candidate_exp_years} anos de experiência)
 Senioridade/Objetivo: {user_profile.professional_goals or 'Desenvolvedor'}
 Stack: {', '.join(user_profile.technologies or [])}
 Bancos: {', '.join(user_profile.databases or [])} | DevOps: {', '.join(user_profile.devops_tools or [])} | Cloud: {', '.join(user_profile.cloud_providers or [])}
@@ -164,7 +173,17 @@ Skills já pré-identificadas no candidato: {', '.join(matched_quick) if matched
                 user_prompt=user_prompt,
                 response_schema=MatchResponse
             )
-            
+
+            # Deterministic Seniority Guard: Enforce penalty if Junior/Pleno candidate vs Senior job
+            if job_is_senior and candidate_seniority.lower() in ["junior", "estagio", "estagiario"]:
+                if match_data.score > 35:
+                    match_data.score = 35
+                match_data.fit = "IGNORE"
+                match_data.recommendation = False
+                seniority_risk = "Incompatibilidade: vaga exige nível Sênior/Especialista."
+                if seniority_risk not in match_data.risks:
+                    match_data.risks.append(seniority_risk)
+
             if best_resume:
                 match_data.recommended_resume_id = best_resume.id
                 match_data.recommended_resume_name = best_resume.version_name

@@ -71,5 +71,186 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
         await queue.enqueue(101)
         self.assertEqual(queue.queue.qsize(), 1)
 
+    async def test_ingest_new_jobs_success(self):
+        from app.services.scraper_service import scraper_service
+        from app.models.db_models import Job, Application
+
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        scraped = [{
+            "title": "Desenvolvedor Full Stack Pleno",
+            "company": "Tech Corp",
+            "url": "https://example.com/job/123",
+            "description": "Python e React",
+            "location": "Remoto",
+            "work_mode": "Remote",
+            "salary": "N/A"
+        }]
+
+        with patch("app.services.ats_queue.ats_worker_queue.enqueue", new_callable=AsyncMock) as mock_enqueue:
+            await scraper_service.ingest_new_jobs(mock_db, scraped)
+            
+            # Verify DB operations
+            self.assertEqual(mock_db.add.call_count, 2)
+            added_objects = [call[0][0] for call in mock_db.add.call_args_list]
+            self.assertTrue(any(isinstance(obj, Job) for obj in added_objects))
+            self.assertTrue(any(isinstance(obj, Application) for obj in added_objects))
+            
+            # Verify commit called and rollback not called
+            self.assertEqual(mock_db.commit.call_count, 1)
+            self.assertEqual(mock_db.rollback.call_count, 0)
+            self.assertEqual(mock_enqueue.call_count, 1)
+
+    async def test_application_draft_cache(self):
+        from app.services.application_generator import ApplicationGeneratorService, ApplicationDraftSchema
+        from app.models.db_models import UserProfile, Job, JobAnalysis
+
+        service = ApplicationGeneratorService()
+        service._draft_cache.clear()
+
+        user = UserProfile(id=1, name="Dev Test", technologies=["Python", "FastAPI"], education="BS", location="Remote", professional_goals="Backend")
+        job = Job(id=99, title="Python Lead", company="Stably", description="Looking for Python FastAPI lead engineer.")
+        analysis = JobAnalysis(id=10, job_id=99, extracted_role="Python Lead", required_skills=["Python", "FastAPI"])
+
+        dummy_draft = ApplicationDraftSchema(subject="Candidatura Python Lead", body="Olá, tenho interesse na vaga.")
+
+        with patch("app.services.llm_service.llm_service.get_structured_output", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = dummy_draft
+
+            # 1st call: invokes LLM
+            res1 = await service.generate_draft(user, job, analysis)
+            self.assertEqual(res1.subject, "Candidatura Python Lead")
+            self.assertEqual(mock_llm.call_count, 1)
+
+            # 2nd call: cache HIT, 0 LLM calls
+            res2 = await service.generate_draft(user, job, analysis)
+            self.assertEqual(res2.subject, "Candidatura Python Lead")
+            self.assertEqual(mock_llm.call_count, 1)
+
+    async def test_matching_fast_path_and_cache(self):
+        from app.services.matching import MatchingService
+        from app.models.db_models import UserProfile, Job, JobAnalysis, Resume
+        from app.schemas.schemas import MatchResponse
+
+        service = MatchingService()
+        service._match_cache.clear()
+
+        user = UserProfile(id=1, name="Dev Test", seniority_level="Senior", technologies=["Python", "FastAPI"], experiences=[])
+        job = Job(id=50, title="Python Senior", company="Tech Corp", description="FastAPI e Python")
+        analysis = JobAnalysis(id=5, job_id=50, extracted_role="Python Senior", seniority="Senior", required_skills=["Python"])
+        resume = Resume(id=10, version_name="CV Backend", parsed_data={"skills": ["Python"]})
+
+        mock_db = AsyncMock()
+
+        dummy_match = MatchResponse(
+            score=88,
+            fit="HIGH_MATCH",
+            matched_requirements=["Python"],
+            missing_requirements=[],
+            strengths=["Excelente fit"],
+            risks=[],
+            recommendation=True,
+            explanation="Candidato atende todos os requisitos.",
+            recommended_resume_id=10,
+            recommended_resume_name="CV Backend"
+        )
+
+        with patch("app.services.llm_service.llm_service.get_structured_output", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = dummy_match
+
+            # 1st call: invokes LLM and stores in cache
+            res1 = await service.match_job_profile(
+                db=mock_db,
+                job_id=50,
+                job=job,
+                job_analysis=analysis,
+                user_profile=user,
+                resumes=[resume]
+            )
+            self.assertEqual(res1.score, 88)
+            self.assertEqual(mock_llm.call_count, 1)
+
+            # 2nd call: fast cache hit
+            res2 = await service.match_job_profile(
+                db=mock_db,
+                job_id=50,
+                job=job,
+                job_analysis=analysis,
+                user_profile=user,
+                resumes=[resume]
+            )
+            self.assertEqual(res2.score, 88)
+            self.assertEqual(mock_llm.call_count, 1)
+
+    async def test_matching_seniority_guard_blocks_junior_for_senior_job(self):
+        from app.services.matching import MatchingService
+        from app.models.db_models import UserProfile, Job, JobAnalysis, Resume
+        from app.schemas.schemas import MatchResponse
+
+        service = MatchingService()
+        service._match_cache.clear()
+
+        # Junior candidate vs Senior job
+        user = UserProfile(id=2, name="Junior Dev", seniority_level="Junior", years_of_experience=1.0, technologies=["Python"], experiences=[])
+        job = Job(id=51, title="Tech Lead / Senior Python Engineer", company="BigTech", description="Lead team")
+        analysis = JobAnalysis(id=6, job_id=51, extracted_role="Tech Lead", seniority="Senior", required_skills=["Python"])
+        resume = Resume(id=11, version_name="CV Junior", parsed_data={"skills": ["Python"]})
+
+        mock_db = AsyncMock()
+        dummy_match = MatchResponse(
+            score=90,
+            fit="HIGH_MATCH",
+            matched_requirements=["Python"],
+            missing_requirements=[],
+            strengths=["Python"],
+            risks=[],
+            recommendation=True,
+            explanation="Excelente stack."
+        )
+
+        with patch("app.services.llm_service.llm_service.get_structured_output", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = dummy_match
+
+            res = await service.match_job_profile(
+                db=mock_db,
+                job_id=51,
+                job=job,
+                job_analysis=analysis,
+                user_profile=user,
+                resumes=[resume]
+            )
+            # Seniority guard must cap score to <= 35 and fit to IGNORE
+            self.assertLessEqual(res.score, 35)
+            self.assertEqual(res.fit, "IGNORE")
+            self.assertFalse(res.recommendation)
+            self.assertTrue(any("senioridade" in r.lower() or "sênior" in r.lower() for r in res.risks))
+
+    async def test_rate_limiter_concurrency_no_deadlock(self):
+        from app.services.rate_limiter import AsyncTokenBucketRateLimiter
+        import time
+
+        limiter = AsyncTokenBucketRateLimiter(requests_per_minute=300, max_concurrency=10)
+        
+        async def mock_task(idx):
+            await limiter.acquire()
+            try:
+                await asyncio.sleep(0.01)
+                return idx
+            finally:
+                limiter.release()
+
+        t0 = time.monotonic()
+        tasks = [mock_task(i) for i in range(25)]
+        results = await asyncio.gather(*tasks)
+        t1 = time.monotonic()
+
+        self.assertEqual(len(results), 25)
+        # All 25 tasks must complete smoothly in less than 2 seconds (no multi-minute compounding delay)
+        self.assertLess(t1 - t0, 2.0)
+
 if __name__ == "__main__":
     unittest.main()

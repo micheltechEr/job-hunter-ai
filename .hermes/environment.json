@@ -4,9 +4,9 @@
   "bootstrap": [],
   "build": [],
   "test": [
-    "uv run python -m unittest discover -s tests -p \"test_*.py\""
+    ".venv/Scripts/python -m pytest"
   ],
-  "start": "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000",
+  "start": ".venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000",
   "port": 8000,
   "readinessPath": "/docs"
 }

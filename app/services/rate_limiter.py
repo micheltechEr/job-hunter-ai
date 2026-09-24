@@ -12,7 +12,7 @@ from app.config import settings
 logger = logging.getLogger("job_hunter.rate_limiter")
 
 class AsyncTokenBucketRateLimiter:
-    """Token Bucket rate limiter ensuring we do not exceed requests per minute."""
+    """Token Bucket rate limiter ensuring we do not exceed requests per minute without deadlock or negative compounding."""
     def __init__(self, requests_per_minute: int, max_concurrency: int):
         self.rpm = max(1, requests_per_minute)
         self.capacity = float(self.rpm)
@@ -23,22 +23,27 @@ class AsyncTokenBucketRateLimiter:
         self.semaphore = asyncio.Semaphore(max(1, max_concurrency))
 
     async def acquire(self):
-        """Acquires a token and semaphore slot, sleeping if necessary to avoid exceeding RPM."""
+        """Acquires a token and semaphore slot with non-negative elapsed clamping and bounded pacing."""
         await self.semaphore.acquire()
+        sleep_needed = 0.0
         async with self.lock:
             now = time.monotonic()
-            elapsed = now - self.last_update
+            elapsed = max(0.0, now - self.last_update)
             self.last_update = now
-            self.tokens = min(self.capacity, self.tokens + elapsed * self.fill_rate)
+            self.tokens = min(self.capacity, max(0.0, self.tokens) + elapsed * self.fill_rate)
 
-            if self.tokens < 1.0:
-                sleep_needed = (1.0 - self.tokens) / self.fill_rate
-                logger.info(f"Rate limiter pacing: waiting {sleep_needed:.2f}s to respect RPM limits...")
-                await asyncio.sleep(sleep_needed)
-                self.tokens = 0.0
-                self.last_update = time.monotonic()
-            else:
+            if self.tokens >= 1.0:
                 self.tokens -= 1.0
+                sleep_needed = 0.0
+            else:
+                needed = 1.0 - self.tokens
+                sleep_needed = needed / self.fill_rate
+                self.tokens = 0.0
+
+        if sleep_needed > 0:
+            bounded_sleep = min(1.0, sleep_needed)
+            logger.debug(f"Rate limiter pacing: waiting {bounded_sleep:.2f}s to respect RPM limits...")
+            await asyncio.sleep(bounded_sleep)
 
     def release(self):
         """Releases the concurrency semaphore slot."""

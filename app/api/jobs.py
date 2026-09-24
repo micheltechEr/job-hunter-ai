@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -7,12 +8,21 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import or_
 
 from app.database import get_db
-from app.models.db_models import Job, JobAnalysis, Application, UserProfile
-from app.schemas.schemas import JobCreate, JobResponse, MatchResponse, ApplicationResponse
+from app.models.db_models import Job, JobAnalysis, Application, UserProfile, Resume
+from app.schemas.schemas import (
+    JobCreate,
+    JobResponse,
+    MatchResponse,
+    ApplicationResponse,
+    ResumeResponse,
+    ScrapeTriggerRequest,
+    ScrapeTriggerResponse
+)
 from app.services.job_analysis import job_analysis_service
 from app.services.matching import matching_service
 from app.services.application_generator import application_generator_service
 from app.services.ats_queue import ats_worker_queue
+from app.services.scraper_service import is_senior_title
 
 router = APIRouter()
 logger = logging.getLogger("job_hunter.api.jobs")
@@ -72,13 +82,15 @@ async def list_jobs(
     min_score: Optional[int] = Query(None, description="Filtra vagas com score ATS mínimo (ex: 80)"),
     status_filter: Optional[str] = Query(None, description="Filtra por status da candidatura (ex: HIGH_MATCH, ANALYZING, DISCOVERED)"),
     work_mode: Optional[str] = Query(None, description="Filtra por modalidade (Remote, Hybrid, On-site)"),
+    seniority: Optional[str] = Query(None, description="Filtra por senioridade (Junior, Pleno, Senior, etc.)"),
+    exclude_senior: bool = Query(False, description="Oculta vagas com perfil Sênior/Lead/Staff"),
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Lists and searches jobs instantly while ATS generation runs concurrently in the background.
-    Supports multi-field keyword search, ATS score filtering, and work mode filters.
+    Supports multi-field keyword search, ATS score filtering, work mode and seniority filters.
     """
     query = (
         select(Job)
@@ -104,7 +116,7 @@ async def list_jobs(
     result = await db.execute(query)
     jobs = result.scalars().all()
 
-    # In-memory post-filtering for application relationships (score / status)
+    # In-memory post-filtering for application relationships (score / status / seniority)
     filtered_jobs = []
     for j in jobs:
         if min_score is not None:
@@ -113,6 +125,25 @@ async def list_jobs(
         if status_filter and status_filter.strip():
             if not j.application or (j.application.status or "").upper() != status_filter.strip().upper():
                 continue
+        
+        job_is_senior = (j.analysis and j.analysis.seniority and "senior" in j.analysis.seniority.lower()) or is_senior_title(j.title)
+        
+        if exclude_senior and job_is_senior:
+            continue
+
+        if seniority and seniority.strip() and seniority.strip().lower() != "all":
+            sen_req = seniority.strip().lower()
+            job_sen = (j.analysis.seniority if j.analysis and j.analysis.seniority else "").lower()
+            if sen_req in ["junior", "jr", "estagio", "estágio", "junior/pleno"]:
+                if job_is_senior:
+                    continue
+            elif sen_req in ["pleno", "mid"]:
+                if job_is_senior:
+                    continue
+            elif sen_req == "senior":
+                if not job_is_senior:
+                    continue
+
         filtered_jobs.append(j)
 
     return filtered_jobs
@@ -176,18 +207,36 @@ async def match_job(job_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{job_id}/generate-application", response_model=ApplicationResponse)
 async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(get_db)):
-    """Triggers complete ATS evaluation and drafts candidate personalized application."""
+    """Triggers complete ATS evaluation and drafts candidate personalized application with parallel LLM execution."""
     try:
-        res = await db.execute(
+        # 1. Fetch Job with loaded relationships
+        res_job = await db.execute(
             select(Job)
             .options(selectinload(Job.analysis), selectinload(Job.application))
             .where(Job.id == job_id)
         )
-        job = res.scalars().first()
+        job = res_job.scalars().first()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found.")
 
-        # Ensure analysis exists
+        # Fast path: If application is already generated and ready, return immediately (<2ms)
+        if job.application and job.application.email_body and job.application.score is not None and job.application.status != "ANALYZING":
+            return job.application
+
+        # 2. Fetch User Profile and Resumes sequentially on the same session
+        res_prof = await db.execute(
+            select(UserProfile)
+            .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
+            .limit(1)
+        )
+        user_prof = res_prof.scalars().first()
+        if not user_prof:
+            raise HTTPException(status_code=400, detail="User profile not configured.")
+
+        res_resumes = await db.execute(select(Resume))
+        resumes = res_resumes.scalars().all()
+
+        # 3. Ensure analysis exists (create once if missing)
         if not job.analysis:
             analysis_data = await job_analysis_service.analyze_job_description(job.description)
             db_analysis = JobAnalysis(
@@ -208,22 +257,25 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
             await db.commit()
             await db.refresh(job)
 
-        match_res = await matching_service.match_job_profile(db, job_id)
-
-        res_prof = await db.execute(
-            select(UserProfile)
-            .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
-            .limit(1)
+        # 4. Parallel Execution: Run ATS Match and Application Email Draft concurrently
+        match_task = matching_service.match_job_profile(
+            db=db,
+            job_id=job_id,
+            job=job,
+            job_analysis=job.analysis,
+            user_profile=user_prof,
+            resumes=resumes
         )
-        user_prof = res_prof.scalars().first()
-        if not user_prof:
-            raise HTTPException(status_code=400, detail="User profile not configured.")
+        draft_task = application_generator_service.generate_draft(
+            user_profile=user_prof,
+            job=job,
+            job_class=job.analysis
+        )
 
-        draft = await application_generator_service.generate_draft(user_prof, job, job.analysis)
+        match_res, draft = await asyncio.gather(match_task, draft_task)
 
-        res_app = await db.execute(select(Application).where(Application.job_id == job_id))
-        app_record = res_app.scalars().first()
-
+        # 5. Attach or update application record
+        app_record = job.application
         recipient = draft.recipient_email if draft.recipient_email else (app_record.recipient_email if app_record else None)
 
         if app_record:
@@ -261,10 +313,85 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
         )
 
 
-@router.post("/scrape/trigger", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_jobs_scraping():
-    """Human-triggered instant background scrape for target jobs."""
+@router.post("/{job_id}/tailor-resume", response_model=ResumeResponse)
+async def tailor_job_resume(job_id: int, db: AsyncSession = Depends(get_db)):
+    """Adapts candidate CV specifically for this job, regenerates ATS PDF and attaches it to the application."""
+    from app.services.resume_service import tailor_and_save_resume_for_job
+    try:
+        resume = await tailor_and_save_resume_for_job(db, job_id)
+        return resume
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Failed to tailor resume for job {job_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao adaptar currículo para a vaga: {str(e)}"
+        )
+
+
+@router.post("/scrape/trigger", response_model=ScrapeTriggerResponse, status_code=status.HTTP_202_ACCEPTED)
+async def trigger_jobs_scraping(
+    payload: Optional[ScrapeTriggerRequest] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """Human-triggered instant background scrape for target jobs based on specified or profile roles."""
     from app.services.scheduler import run_job_hunting_scrape
     import asyncio
-    asyncio.create_task(run_job_hunting_scrape())
-    return {"message": "Varredura iniciada em segundo plano com base nos cargos salvos."}
+
+    target_roles: List[str] = []
+    if payload:
+        if payload.role and payload.role.strip():
+            for part in payload.role.split(","):
+                clean = part.strip()
+                if clean and clean not in target_roles:
+                    target_roles.append(clean)
+        if payload.roles:
+            for r in payload.roles:
+                clean = r.strip() if isinstance(r, str) else ""
+                if clean and clean not in target_roles:
+                    target_roles.append(clean)
+
+    res_prof = await db.execute(select(UserProfile).limit(1))
+    prof = res_prof.scalars().first()
+
+    # If no custom roles passed, fetch existing profile roles
+    if not target_roles:
+        if prof and prof.desired_roles:
+            target_roles = [r.strip() for r in prof.desired_roles if r and r.strip()]
+        else:
+            target_roles = ["Desenvolvedor Python", "Engenheiro de Software"]
+
+    target_location = (payload.location.strip() if (payload and payload.location and payload.location.strip()) else "Brasil")
+    target_platforms = (payload.platforms if (payload and payload.platforms) else ["linkedin", "gupy", "programathor"])
+    target_limit = (payload.limit_per_platform if (payload and payload.limit_per_platform) else 5)
+    save_to_profile = (payload.save_to_profile if payload else False)
+    target_seniority = payload.seniority if (payload and payload.seniority) else (prof.seniority_level if prof and prof.seniority_level else "Junior")
+    exclude_senior = payload.exclude_senior if (payload and payload.exclude_senior is not None) else True
+
+    # Trigger background scraping
+    asyncio.create_task(
+        run_job_hunting_scrape(
+            roles=target_roles,
+            location=target_location,
+            seniority=target_seniority,
+            platforms=target_platforms,
+            limit_per_platform=target_limit,
+            exclude_senior=exclude_senior,
+            save_to_profile=save_to_profile
+        )
+    )
+
+    platform_names = ", ".join([p.capitalize() for p in target_platforms])
+    roles_names = ", ".join(target_roles)
+    sen_str = f" [{target_seniority}]" if target_seniority else ""
+    msg = f"Varredura iniciada para: '{roles_names}'{sen_str} ({target_location}) nas plataformas: {platform_names}."
+
+    return ScrapeTriggerResponse(
+        message=msg,
+        roles=target_roles,
+        location=target_location,
+        platforms=target_platforms,
+        seniority=target_seniority,
+        status="initiated"
+    )
