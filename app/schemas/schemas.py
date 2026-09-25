@@ -171,7 +171,7 @@ class ScrapeTriggerRequest(BaseModel):
     roles: Optional[List[str]] = Field(default=None, description="Lista de múltiplos cargos para buscar")
     location: Optional[str] = Field(default="Brasil", description="Localização geográfica da busca")
     seniority: Optional[str] = Field(default=None, description="Filtro de senioridade (ex: 'Junior', 'Pleno', 'Junior/Pleno', 'Senior', 'All')")
-    platforms: Optional[List[str]] = Field(default=["linkedin", "gupy", "programathor"], description="Plataformas a consultar")
+    platforms: Optional[List[str]] = Field(default=["linkedin", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"], description="Plataformas a consultar")
     limit_per_platform: Optional[int] = Field(default=5, ge=1, le=20, description="Quantidade de vagas por plataforma")
     exclude_senior: Optional[bool] = Field(default=True, description="Se true e perfil for Junior/Pleno, descarta vagas Senior/Lead")
     save_to_profile: Optional[bool] = Field(default=False, description="Salvar o cargo no perfil do usuário para buscas futuras")

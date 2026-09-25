@@ -146,7 +146,7 @@
 
                 <!-- Plataformas -->
                 <div>
-                    <label class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Portais Alvo</label>
+                    <label class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Portais Alvo (6 Fontes)</label>
                     <div class="grid grid-cols-3 gap-1.5">
                         <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
                             <input type="checkbox" id="scrape-plat-linkedin" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
@@ -159,6 +159,18 @@
                         <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
                             <input type="checkbox" id="scrape-plat-programathor" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
                             <span class="text-[11px] text-gray-700 font-medium">Programathor</span>
+                        </label>
+                        <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
+                            <input type="checkbox" id="scrape-plat-indeed" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                            <span class="text-[11px] text-gray-700 font-medium">Indeed</span>
+                        </label>
+                        <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
+                            <input type="checkbox" id="scrape-plat-infojobs" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                            <span class="text-[11px] text-gray-700 font-medium">InfoJobs</span>
+                        </label>
+                        <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
+                            <input type="checkbox" id="scrape-plat-trabalhabrasil" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                            <span class="text-[11px] text-gray-700 font-medium">Trabalha BR</span>
                         </label>
                     </div>
                 </div>
@@ -463,9 +475,12 @@
             const saveProfile = document.getElementById('scrape-save-profile').checked;
 
             const platforms = [];
-            if (document.getElementById('scrape-plat-linkedin').checked) platforms.push('linkedin');
-            if (document.getElementById('scrape-plat-gupy').checked) platforms.push('gupy');
-            if (document.getElementById('scrape-plat-programathor').checked) platforms.push('programathor');
+            if (document.getElementById('scrape-plat-linkedin')?.checked) platforms.push('linkedin');
+            if (document.getElementById('scrape-plat-gupy')?.checked) platforms.push('gupy');
+            if (document.getElementById('scrape-plat-programathor')?.checked) platforms.push('programathor');
+            if (document.getElementById('scrape-plat-indeed')?.checked) platforms.push('indeed');
+            if (document.getElementById('scrape-plat-infojobs')?.checked) platforms.push('infojobs');
+            if (document.getElementById('scrape-plat-trabalhabrasil')?.checked) platforms.push('trabalhabrasil');
 
             if (platforms.length === 0) {
                 alert("Por favor, selecione ao menos uma plataforma de busca.");

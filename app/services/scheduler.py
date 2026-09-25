@@ -53,13 +53,13 @@ async def run_job_hunting_scrape(
             )
             
             # Determine platforms
-            valid_platforms = {"linkedin", "programathor", "gupy"}
+            valid_platforms = {"linkedin", "programathor", "gupy", "indeed", "infojobs", "trabalhabrasil"}
             if platforms:
                 chosen_platforms = [p.strip().lower() for p in platforms if p and p.strip().lower() in valid_platforms]
             else:
-                chosen_platforms = ["linkedin", "programathor", "gupy"]
+                chosen_platforms = ["linkedin", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"]
             if not chosen_platforms:
-                chosen_platforms = ["linkedin", "programathor", "gupy"]
+                chosen_platforms = ["linkedin", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"]
             
             # Persist roles to profile if requested
             if save_to_profile and target_roles:
@@ -122,6 +122,36 @@ async def run_job_hunting_scrape(
                             total_ingested += len(gp_list)
                     except Exception as gp_err:
                         logger.error(f"Error scraping Gupy for '{role}': {gp_err}")
+
+                # Indeed Brasil
+                if "indeed" in chosen_platforms:
+                    try:
+                        ind_list = await scraper_service.scrape_indeed_jobs(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        if ind_list:
+                            await scraper_service.ingest_new_jobs(db, ind_list, exclude_senior=should_exclude_senior)
+                            total_ingested += len(ind_list)
+                    except Exception as ind_err:
+                        logger.error(f"Error scraping Indeed for '{role}': {ind_err}")
+
+                # InfoJobs Brasil
+                if "infojobs" in chosen_platforms:
+                    try:
+                        ij_list = await scraper_service.scrape_infojobs_jobs(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        if ij_list:
+                            await scraper_service.ingest_new_jobs(db, ij_list, exclude_senior=should_exclude_senior)
+                            total_ingested += len(ij_list)
+                    except Exception as ij_err:
+                        logger.error(f"Error scraping InfoJobs for '{role}': {ij_err}")
+
+                # Trabalha Brasil
+                if "trabalhabrasil" in chosen_platforms:
+                    try:
+                        tb_list = await scraper_service.scrape_trabalhabrasil_jobs(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        if tb_list:
+                            await scraper_service.ingest_new_jobs(db, tb_list, exclude_senior=should_exclude_senior)
+                            total_ingested += len(tb_list)
+                    except Exception as tb_err:
+                        logger.error(f"Error scraping Trabalha Brasil for '{role}': {tb_err}")
             
             logger.info(f"Job hunting scrape run completed. Scraped {total_ingested} job listings enqueued for background ATS.")
             return {
