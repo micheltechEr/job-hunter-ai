@@ -1,12 +1,9 @@
 {
   "name": "ai-job-hunter",
-  "kind": "fastapi",
+  "kind": "python",
   "bootstrap": [],
   "build": [],
   "test": [
-    ".venv/Scripts/python -m pytest"
-  ],
-  "start": ".venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000",
-  "port": 8000,
-  "readinessPath": "/docs"
+    ".venv\\Scripts\\python.exe -m pytest"
+  ]
 }
