@@ -2,7 +2,7 @@ import os
 import shutil
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException, status, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
