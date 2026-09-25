@@ -67,6 +67,21 @@ class TailoredResumeSchema(BaseModel):
     languages: List[str] = Field(default=[], description="Idiomas falados")
 
 
+class CopyThiefReport(BaseModel):
+    score: int = Field(default=85, description="Score de qualidade de copy de 0 a 100")
+    grade: str = Field(default="A", description="Classificação A+, A, B, C")
+    summary: str = Field(default="", description="Diagnóstico da copy do currículo")
+    action_verbs_count: int = Field(default=0, description="Quantidade de verbos de ação e impacto")
+    metrics_count: int = Field(default=0, description="Métricas e números quantificáveis detectados")
+    slop_words_detected: List[str] = Field(default=[], description="Palavras clichês / AI slop encontradas")
+    strengths: List[str] = Field(default=[], description="Pontos fortes da copy")
+    improvements: List[str] = Field(default=[], description="Oportunidades de melhoria de conversão")
+
+
+class TailorResumeRequest(BaseModel):
+    include_seniority: bool = Field(default=False, description="Se False, remove sufixos/prefixos de senioridade (Jr, Pleno, Sr) dos cargos e títulos.")
+
+
 # ----------------- API Request / Response Schemas -----------------
 
 class ResumeResponse(BaseModel):

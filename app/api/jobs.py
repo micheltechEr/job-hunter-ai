@@ -16,7 +16,8 @@ from app.schemas.schemas import (
     ApplicationResponse,
     ResumeResponse,
     ScrapeTriggerRequest,
-    ScrapeTriggerResponse
+    ScrapeTriggerResponse,
+    TailorResumeRequest
 )
 from app.services.job_analysis import job_analysis_service
 from app.services.matching import matching_service
@@ -314,11 +315,17 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
 
 
 @router.post("/{job_id}/tailor-resume", response_model=ResumeResponse)
-async def tailor_job_resume(job_id: int, db: AsyncSession = Depends(get_db)):
+async def tailor_job_resume(
+    job_id: int,
+    payload: Optional[TailorResumeRequest] = None,
+    include_seniority: bool = Query(False, description="Se true, mantém sufixos de senioridade (Jr, Pleno, Sr) nos cargos"),
+    db: AsyncSession = Depends(get_db)
+):
     """Adapts candidate CV specifically for this job, regenerates ATS PDF and attaches it to the application."""
     from app.services.resume_service import tailor_and_save_resume_for_job
     try:
-        resume = await tailor_and_save_resume_for_job(db, job_id)
+        inc_sen = payload.include_seniority if payload is not None else include_seniority
+        resume = await tailor_and_save_resume_for_job(db, job_id, include_seniority=inc_sen)
         return resume
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

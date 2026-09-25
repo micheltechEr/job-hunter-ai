@@ -332,10 +332,16 @@
                                 👁️ Pré-visualizar PDF
                             </button>
                         </div>
-                        <div class="pt-2 flex justify-between items-center border-t border-indigo-200/60">
-                            <span class="text-[11px] text-gray-600">Adapte o CV com IA para esta vaga:</span>
-                            <button id="btn-tailor-cv" type="button" onclick="tailorCvForCurrentJob()" class="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1 rounded shadow-xs transition flex items-center space-x-1">
-                                <span id="btn-tailor-cv-text">✨ Adaptar CV para Vaga</span>
+                        <div class="pt-2 flex flex-col gap-2 border-t border-indigo-200/60">
+                            <div class="flex items-center justify-between">
+                                <span class="text-[11px] text-gray-600 font-medium">Adaptação com IA (Copy-Thief):</span>
+                                <label class="flex items-center gap-1.5 cursor-pointer text-xs select-none">
+                                    <input type="checkbox" id="tailor-include-seniority" class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                                    <span class="text-[11px] text-gray-600">Incluir Senioridade</span>
+                                </label>
+                            </div>
+                            <button id="btn-tailor-cv" type="button" onclick="tailorCvForCurrentJob()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded shadow-xs transition flex items-center justify-center space-x-1">
+                                <span id="btn-tailor-cv-text">✨ Gerar e Adaptar CV (Copy-Thief)</span>
                             </button>
                         </div>
                     </div>
@@ -1142,6 +1148,37 @@
                     </div>
                 `;
 
+                if (p.copy_thief_report) {
+                    const ct = p.copy_thief_report;
+                    html += `
+                        <div class="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-lg p-3 space-y-2 mb-3">
+                            <div class="flex justify-between items-center">
+                                <span class="font-bold text-emerald-950 flex items-center gap-1.5 text-xs">
+                                    <span>💎</span> Avaliação Copy-Thief do Currículo
+                                </span>
+                                <span class="bg-emerald-600 text-white font-extrabold text-xs px-2.5 py-0.5 rounded-full shadow-xs">
+                                    Grade ${ct.grade || 'A'} (${ct.score || 85}/100)
+                                </span>
+                            </div>
+                            <p class="text-[11px] text-emerald-800 leading-relaxed font-medium">${ct.summary || ''}</p>
+                            <div class="grid grid-cols-2 gap-2 text-[11px] pt-1">
+                                <div class="bg-white/90 rounded p-2 border border-emerald-100 shadow-xs">
+                                    <span class="font-bold text-emerald-900 block mb-1">⚡ Pontos Fortes de Conversão:</span>
+                                    <ul class="list-disc pl-3 text-emerald-800 space-y-0.5 text-[10px]">
+                                        ${(ct.strengths || []).map(s => `<li>${s}</li>`).join('')}
+                                    </ul>
+                                </div>
+                                <div class="bg-white/90 rounded p-2 border border-emerald-100 shadow-xs">
+                                    <span class="font-bold text-teal-900 block mb-1">🎯 Dicas de Otimização Copy-Thief:</span>
+                                    <ul class="list-disc pl-3 text-teal-800 space-y-0.5 text-[10px]">
+                                        ${(ct.improvements || []).map(i => `<li>${i}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
                 if (p.summary) {
                     html += `
                         <div>
@@ -1200,14 +1237,19 @@
                 return;
             }
 
+            const incSeniority = document.getElementById('tailor-include-seniority')?.checked || false;
             const btn = document.getElementById('btn-tailor-cv');
             const txt = document.getElementById('btn-tailor-cv-text');
             const origText = txt.innerText;
             btn.disabled = true;
-            txt.innerText = "Adaptando CV com IA...";
+            txt.innerText = "Adaptando com Copy-Thief...";
 
             try {
-                const res = await fetch(`/api/jobs/${currentActiveJobId}/tailor-resume`, { method: 'POST' });
+                const res = await fetch(`/api/jobs/${currentActiveJobId}/tailor-resume?include_seniority=${incSeniority}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ include_seniority: incSeniority })
+                });
                 if (!res.ok) {
                     const err = await res.json();
                     throw new Error(err.detail || "Erro ao adaptar currículo");

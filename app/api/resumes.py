@@ -14,9 +14,10 @@ from app.services.resume_service import (
     extract_text_from_pdf,
     parse_resume_content,
     update_user_profile_from_parsed_resume,
-    tailor_and_save_resume_for_job
+    tailor_and_save_resume_for_job,
+    evaluate_resume_copy_thief
 )
-from app.schemas.schemas import ResumeResponse, UserProfileResponse, UpdateProfileRolesRequest
+from app.schemas.schemas import ResumeResponse, UserProfileResponse, UpdateProfileRolesRequest, CopyThiefReport, TailorResumeRequest
 
 router = APIRouter()
 logger = logging.getLogger("job_hunter.api.resumes")
@@ -185,10 +186,16 @@ async def get_resume_preview(resume_id: int, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/tailor/{job_id}", response_model=ResumeResponse)
-async def tailor_resume_endpoint(job_id: int, db: AsyncSession = Depends(get_db)):
+async def tailor_resume_endpoint(
+    job_id: int,
+    payload: Optional[TailorResumeRequest] = None,
+    include_seniority: bool = Query(False, description="Se true, mantém sufixos de senioridade nos cargos"),
+    db: AsyncSession = Depends(get_db)
+):
     """Creates an AI-adapted, ATS-optimized PDF resume tailored specifically for the target job."""
     try:
-        resume = await tailor_and_save_resume_for_job(db, job_id)
+        inc_sen = payload.include_seniority if payload is not None else include_seniority
+        resume = await tailor_and_save_resume_for_job(db, job_id, include_seniority=inc_sen)
         return resume
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
@@ -198,6 +205,19 @@ async def tailor_resume_endpoint(job_id: int, db: AsyncSession = Depends(get_db)
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao adaptar currículo para a vaga: {str(e)}"
         )
+
+
+@router.get("/{resume_id}/copy-thief", response_model=CopyThiefReport)
+async def get_resume_copy_thief_evaluation(resume_id: int, db: AsyncSession = Depends(get_db)):
+    """Evaluates the resume copy quality according to Copy-Thief conversion guidelines."""
+    result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    resume = result.scalars().first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Currículo não encontrado.")
+    
+    parsed = resume.parsed_data or {}
+    report = evaluate_resume_copy_thief(parsed)
+    return report
 
 @router.delete("/{resume_id}", status_code=status.HTTP_200_OK)
 async def delete_resume(resume_id: int, db: AsyncSession = Depends(get_db)):

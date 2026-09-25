@@ -150,3 +150,46 @@ class TestResumeTailoring(unittest.IsolatedAsyncioTestCase):
         # Must only contain the authentic company "Varejo Hub"
         self.assertEqual(len(guarded.experiences), 1)
         self.assertEqual(guarded.experiences[0].company, "Varejo Hub")
+        # When include_seniority=False (default), seniority "Jr" must be stripped from role
+        self.assertEqual(guarded.experiences[0].role, "Dev Full Stack")
+
+    def test_strip_seniority_utility(self):
+        from app.services.resume_service import strip_seniority
+        self.assertEqual(strip_seniority("Desenvolvedor Full Stack Jr"), "Desenvolvedor Full Stack")
+        self.assertEqual(strip_seniority("Desenvolvedor Python Júnior"), "Desenvolvedor Python")
+        self.assertEqual(strip_seniority("Engenheiro Backend Pleno"), "Engenheiro Backend")
+        self.assertEqual(strip_seniority("Tech Lead / Sênior Python Engineer"), "Python Engineer")
+        self.assertEqual(strip_seniority("Técnico em Informática Jr II"), "Técnico em Informática")
+        self.assertEqual(strip_seniority("Desenvolvedor Frontend"), "Desenvolvedor Frontend")
+
+    def test_copy_thief_evaluation(self):
+        from app.services.resume_service import evaluate_resume_copy_thief
+        sample_cv = {
+            "name": "Ângelo Miguel",
+            "summary": "Desenvolvedor focado em arquitetura de microsserviços e automação com agentes de IA.",
+            "experiences": [
+                {
+                    "company": "Varejo Hub",
+                    "role": "Desenvolvedor Full Stack",
+                    "highlights": [
+                        "Desenvolveu APIs REST de alto rendimento reduzindo latência em 40%.",
+                        "Implementou cache Redis atendendo +50.000 requisições diárias.",
+                        "Automatizou pipelines de RAG com Supabase e OpenAI."
+                    ]
+                }
+            ],
+            "projects": [
+                {
+                    "name": "AI Job Hunter",
+                    "description": "Desenvolveu sistema autônomo com IA acelerando candidaturas em 80%."
+                }
+            ]
+        }
+
+        report = evaluate_resume_copy_thief(sample_cv)
+        self.assertGreaterEqual(report.score, 80)
+        self.assertIn(report.grade, ["A+", "A"])
+        self.assertGreater(report.action_verbs_count, 0)
+        self.assertGreater(report.metrics_count, 0)
+        self.assertEqual(len(report.slop_words_detected), 0)
+        self.assertGreater(len(report.strengths), 0)
