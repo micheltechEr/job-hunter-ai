@@ -424,7 +424,14 @@ class SemanticTaxonomyNormalizer:
         cand_entities_set = set(candidate_profile.canonical_entities)
         for entity_id in job_profile.canonical_entities:
             if entity_id in cand_entities_set:
-                matched.append(entity_id)
+                item = next((it for it in self._taxonomy if it.canonical_id == entity_id), None)
+                if item:
+                    clean_name = item.display_name.split(" (")[0].split(" /")[0]
+                    if clean_name not in matched:
+                        matched.append(clean_name)
+                else:
+                    if entity_id not in matched:
+                        matched.append(entity_id)
 
         # Check mandatory language ecosystems
         # If job mandates a primary language ecosystem (JVM, .NET, Python, Golang, Rust, Ruby, PHP)

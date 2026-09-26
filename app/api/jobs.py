@@ -416,3 +416,91 @@ async def trigger_jobs_scraping(
         seniority=target_seniority,
         status="initiated"
     )
+
+
+# ----------------- LinkedIn Candidate Search Profile & Queries Endpoints -----------------
+
+@router.get("/linkedin/candidate-profile")
+async def get_candidate_search_profile_endpoint(db: AsyncSession = Depends(get_db)):
+    """
+    Returns the versioned 1.0 CandidateSearchProfile JSON contract extracted from the active candidate profile.
+    """
+    from app.services.candidate_profile_builder import CandidateProfileBuilder
+    res_prof = await db.execute(
+        select(UserProfile)
+        .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
+        .limit(1)
+    )
+    prof = res_prof.scalars().first()
+    if not prof:
+        raise HTTPException(status_code=404, detail="User profile not found. Please upload a resume first.")
+
+    candidate_profile = CandidateProfileBuilder.build_from_user_profile(prof)
+    return candidate_profile.model_dump()
+
+
+@router.get("/linkedin/queries")
+async def get_linkedin_queries_endpoint(
+    max_queries: int = Query(default=12, ge=1, le=30),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generates prioritized, metadata-backed search queries from CandidateSearchProfile across 4 progressive layers.
+    """
+    from app.services.candidate_profile_builder import CandidateProfileBuilder
+    from app.services.query_generator import QueryGenerator
+
+    res_prof = await db.execute(
+        select(UserProfile)
+        .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
+        .limit(1)
+    )
+    prof = res_prof.scalars().first()
+    if not prof:
+        raise HTTPException(status_code=404, detail="User profile not found. Please upload a resume first.")
+
+    candidate_profile = CandidateProfileBuilder.build_from_user_profile(prof)
+    gen = QueryGenerator(max_queries=max_queries)
+    queries = gen.generate_queries(candidate_profile, max_queries=max_queries)
+    return {
+        "profile_version": candidate_profile.profile_version,
+        "total_queries": len(queries),
+        "queries": [q.model_dump() for q in queries]
+    }
+
+
+@router.post("/linkedin/search-publications")
+async def search_linkedin_publications_endpoint(
+    max_queries: int = Query(default=4, ge=1, le=10),
+    results_per_query: int = Query(default=4, ge=1, le=10),
+    location: str = Query(default="Brasil"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Runs the end-to-end LinkedIn publication search and hybrid matching pipeline.
+    """
+    from app.services.candidate_profile_builder import CandidateProfileBuilder
+    from app.services.linkedin_search_provider import linkedin_search_provider
+
+    res_prof = await db.execute(
+        select(UserProfile)
+        .options(selectinload(UserProfile.experiences), selectinload(UserProfile.projects))
+        .limit(1)
+    )
+    prof = res_prof.scalars().first()
+    if not prof:
+        raise HTTPException(status_code=404, detail="User profile not found. Please upload a resume first.")
+
+    candidate_profile = CandidateProfileBuilder.build_from_user_profile(prof)
+    results = await linkedin_search_provider.search_and_match_pipeline(
+        candidate_profile=candidate_profile,
+        location=location,
+        max_queries=max_queries,
+        results_per_query=results_per_query
+    )
+
+    return {
+        "total_evaluated": len(results),
+        "relevant_count": sum(1 for r in results if r.breakdown.is_relevant),
+        "results": [r.model_dump() for r in results]
+    }
