@@ -6,9 +6,9 @@ Sistema automatizado com IA para busca, análise de compatibilidade de vagas e e
 
 - **Parser com LLM:** Extrai e normaliza automaticamente o conteúdo de currículos em formato PDF.
 - **RAG & Embeddings:** Representa o currículo como dados estruturados e vetoriais para matching semântico.
-- **AI Matching & Score ATS:** Calcula relevância ponderada por IA e emite relatórios justificando pontos fortes e gaps de competências.
-- **Fila Assíncrona de ATS (`ATSWorkerQueue`):** Cadastro e ingestão de vagas respondem instantaneamente (<10ms), enquanto o cálculo ATS e elaboração de cartas rodam em segundo plano com concorrência controlada.
-- **Busca em Tempo Real Não-Bloqueante:** Pesquisa multi-campo por cargo, empresa, localização ou stack no backend (`GET /api/jobs/?search=...`) e live search no frontend enquanto o ATS processa novas vagas.
+- **AI Matching & Score ATS Sob Demanda:** Calcula relevância ponderada por IA e emite relatórios justificando pontos fortes e gaps de competências ao clicar em cada vaga, prevenindo rate limits de LLM/Embeddings.
+- **Ingestão Leve & Rápida:** Cadastro e scraping de vagas salvam registros instantaneamente no banco sem disparar chamadas pesadas à LLM em lote.
+- **Busca em Tempo Real Não-Bloqueante:** Pesquisa multi-campo por cargo, empresa, localização ou stack no backend (`GET /api/jobs/?search=...`) e live search no frontend com abertura instantânea de vagas já avaliadas.
 - **Cache por Hash SHA-256:** Cache em memória para vetores de embeddings, análise de descrições e resultados de matching, eliminando chamadas de API repetidas e acelerando o pipeline.
 - **Proteção contra Rate Limit:** Algoritmo Token Bucket assíncrono e backoff exponencial com jitter para LLM e API REST.
 - **OAuth 2.0 Gmail integration:** Permite autenticar diretamente sua conta do Gmail para envio de candidaturas utilizando escopos seguros (`gmail.send` e `userinfo.email`).
@@ -53,15 +53,15 @@ Com os pesos oficiais parametrizados:
 
 ---
 
-### 3. Fila Assíncrona e Caching Determinístico (Zero-Block)
+### 3. Avaliação Sob Demanda e Caching Determinístico (Zero Rate Limit & Zero-Block)
 
-Para permitir que o usuário pesquise e navegue pelas vagas sem latência enquanto novas oportunidades são processadas:
-1. **Gravação Imediata:** O endpoint `POST /api/jobs/` e o ingestor do scraper salvam a entidade `Job` com status `ANALYZING` no banco e retornam imediatamente.
-2. **Worker Pool Assíncrono (`ATSWorkerQueue`):** Gerencia uma fila de tarefas com limite de concorrência ($N = 2$), executando a extração estruturada, o matching e a confecção do rascunho de forma isolada.
+Para evitar esgotar cotas de API/rate limits e permitir navegação fluida:
+1. **Gravação Imediata:** O endpoint `POST /api/jobs/` e o ingestor do scraper salvam a entidade `Job` com status `DISCOVERED` no banco instantaneamente sem disparar chamadas pesadas à LLM.
+2. **Cálculo Sob Demanda ao Clicar:** A análise detalhada de requisitos, cálculo de score ATS e confecção de proposta acontecem pontualmente quando o usuário seleciona ou clica em uma vaga específica.
 3. **Cache SHA-256 em Memória:** As chaves de cache são derivadas do hash criptográfico dos textos normalizados:
    $$K_{\text{embed}} = \text{SHA256}(\text{norm}(text))$$
    $$K_{\text{match}} = \text{SHA256}(\text{job\_id} \mathbin{\Vert} \text{job\_text} \mathbin{\Vert} \text{resume\_id} \mathbin{\Vert} \text{profile\_sig})$$
-   Garantindo reutilização instantânea ($O(1)$) com zero chamadas à API da OpenAI/OmniRoute em duplicatas.
+   Garantindo reabertura instantânea ($O(1)$) com zero chamadas à API da OpenAI/OmniRoute em vagas já analisadas.
 
 ---
 

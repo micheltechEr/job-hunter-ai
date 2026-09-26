@@ -78,7 +78,7 @@ class ATSWorkerQueue:
             logger.info(f"Enqueued job {job_id} for background ATS processing (Queue size: {self.queue.qsize()})")
 
     async def _recover_pending_jobs(self):
-        """Checks DB on startup and enqueues jobs that have missing analysis or pending ATS."""
+        """Checks DB on startup and only recovers jobs that were actively marked in ANALYZING status."""
         try:
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
@@ -88,18 +88,11 @@ class ATSWorkerQueue:
                 jobs = result.scalars().all()
                 recovered = 0
                 for job in jobs:
-                    has_contingency = bool(job.application and job.application.notes and "Score automático de contingência" in job.application.notes)
-                    needs_ats = (
-                        (not job.analysis and not has_contingency)
-                        or not job.application
-                        or job.application.score is None
-                        or job.application.status == "ANALYZING"
-                    )
-                    if needs_ats:
+                    if job.application and job.application.status == "ANALYZING":
                         await self.enqueue(job.id)
                         recovered += 1
                 if recovered > 0:
-                    logger.info(f"Recovered and enqueued {recovered} pending/unscored jobs for ATS.")
+                    logger.info(f"Recovered and enqueued {recovered} in-flight ANALYZING jobs for ATS.")
         except Exception as e:
             logger.warning(f"Could not auto-recover pending jobs: {e}")
 

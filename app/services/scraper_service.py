@@ -16,6 +16,94 @@ import re
 logger = logging.getLogger("job_hunter.scraper_service")
 
 
+def clean_job_title(title: str) -> str:
+    """Removes platform noise tags like 'Em Alta', 'Vaga de', 'Nova', etc."""
+    if not title:
+        return ""
+    # Strip prefixes like 'Vaga de', 'Vaga para', 'Vaga '
+    t = re.sub(r'^(?:vaga\s+de\s+|vaga\s+para\s+|vaga\s+)', '', title, flags=re.IGNORECASE).strip()
+    # Strip suffixes like 'Em Alta', 'Em Destaque', 'Nova', 'Urgente'
+    t = re.sub(r'(?:Em\s+Alta|Em\s+Destaque|Nova|Urgente|Exclusiva)$', '', t, flags=re.IGNORECASE).strip()
+    # Strip leading/trailing punctuation and collapse multiple spaces
+    t = re.sub(r'\s+', ' ', t).strip(' -–—|:')
+    return t
+
+
+def is_unrelated_non_tech_title(title: str) -> bool:
+    """Checks if a job title belongs to non-tech, operational, or administrative fields."""
+    if not title:
+        return False
+    t = f" {title.lower()} "
+    non_tech_patterns = [
+        r"\bauxiliar\s+administrativ[oa]\b",
+        r"\bassendente\b",
+        r"\batendente\b",
+        r"\brecepcionista\b",
+        r"\bsecret[aá]ri[ao]\b",
+        r"\bt[eé]cnico\s+em\s+eletr[oô]nica\b",
+        r"\bt[eé]cnico\s+em\s+refrigera[cç][aã]o\b",
+        r"\bt[eé]cnico\s+mec[aâ]nico\b",
+        r"\bt[eé]cnico\s+de\s+manuten[cç][aã]o\b",
+        r"\bt[eé]cnico\s+em\s+enfermagem\b",
+        r"\bt[eé]cnico\s+de\s+seguran[cç]a\b",
+        r"\bmec[aâ]nico\s+de\s+refrigera[cç][aã]o\b",
+        r"\beletricista\b",
+        r"\bmec[aâ]nico\b",
+        r"\bmotorista\b",
+        r"\bporteiro\b",
+        r"\bvigilante\b",
+        r"\bseguran[cç]a\b",
+        r"\bauxiliar\s+de\s+limpeza\b",
+        r"\bauxiliar\s+de\s+servi[cç]os\s+gerais\b",
+        r"\bservi[cç]os\s+gerais\b",
+        r"\bcopeir[ao]\b",
+        r"\bcozinheir[ao]\b",
+        r"\boperador\s+de\s+caixa\b",
+        r"\bbalconista\b",
+        r"\bvendedor[a]?\b",
+        r"\bpromotor[a]?\s+de\s+vendas\b",
+        r"\bestoquista\b",
+        r"\balmoxarife\b",
+        r"\bconferente\b",
+        r"\bauxiliar\s+de\s+produ[cç][aã]o\b",
+        r"\bgar[cç]om\b",
+        r"\bgar[cç]onete\b",
+        r"\bfarmac[eê]utic[ao]\b"
+    ]
+    for pattern in non_tech_patterns:
+        if re.search(pattern, t, re.IGNORECASE):
+            return True
+    return False
+
+
+def is_role_relevant(title: str, target_keyword: str) -> bool:
+    """Checks if a job title is relevant to tech/software roles or target search keyword."""
+    if not title:
+        return False
+    if is_unrelated_non_tech_title(title):
+        return False
+
+    t_clean = clean_job_title(title).lower()
+    kw_clean = (target_keyword or "").lower().strip()
+
+    # Core tech tokens indicating a tech/developer/data role
+    tech_tokens = [
+        "desenvolvedor", "developer", "dev", "programador", "software",
+        "engenheiro", "engineer", "frontend", "front-end", "backend", "back-end",
+        "fullstack", "full-stack", "full stack", "python", "javascript", "typescript",
+        "react", "node", "java", "golang", "c#", ".net", "php", "ruby", "rust",
+        "dados", "data", "analista", "bi", "sql", "ia", "ai", "machine learning",
+        "nlp", "cloud", "aws", "azure", "gcp", "devops", "qa", "tester", "computação",
+        "tecnologia", "ti", "it", "web", "mobile", "android", "ios", "flutter"
+    ]
+
+    kw_tokens = [w for w in re.split(r'[\s,;/]+', kw_clean) if len(w) > 2 and w not in ("vaga", "para", "com", "vagas", "junior", "pleno", "senior")]
+    has_kw_match = any(token in t_clean for token in kw_tokens) if kw_tokens else True
+    has_tech_token = any(token in t_clean for token in tech_tokens)
+
+    return has_kw_match or has_tech_token
+
+
 def is_senior_title(title: str) -> bool:
     """Checks if a job title indicates a Senior, Lead, Staff, Principal, or Management role."""
     if not title:
@@ -441,8 +529,9 @@ class ScraperService:
                     if not title_el:
                         continue
 
-                    title = title_el.get_text(strip=True)
-                    if not title:
+                    title_raw = title_el.get_text(strip=True)
+                    title = clean_job_title(title_raw)
+                    if not title or is_unrelated_non_tech_title(title) or not is_role_relevant(title, keyword):
                         continue
 
                     if exclude_senior and is_senior_title(title):
@@ -497,7 +586,9 @@ class ScraperService:
                 await page.wait_for_timeout(3000)
                 html = await page.content()
                 soup = BeautifulSoup(html, "html.parser")
-                cards = soup.select('[class*="job-card"]:not([class*="skeleton"]), [class*="vacancy"], a[href*="/vagas-de-emprego-em-"]')
+                cards = soup.select('#jobs-wrapper .job__vacancy, .jg__job, [class*="job-card"]:not([class*="skeleton"]), article[class*="job"]')
+                if not cards:
+                    cards = soup.select('a[href*="/vagas-de-emprego-em-"]')
 
                 count = 0
                 for card in cards:
@@ -509,8 +600,9 @@ class ScraperService:
                     loc_el = card.select_one('[class*="location"], [class*="city"]')
                     link_el = card if (card.name == "a" and card.get("href")) else card.select_one("a[href]")
 
-                    title = title_el.get_text(strip=True) if title_el else card.get_text(strip=True).split("\n")[0]
-                    if not title:
+                    title_raw = title_el.get_text(strip=True) if title_el else card.get_text(strip=True).split("\n")[0]
+                    title = clean_job_title(title_raw)
+                    if not title or is_unrelated_non_tech_title(title) or not is_role_relevant(title, keyword):
                         continue
 
                     if exclude_senior and is_senior_title(title):
@@ -546,11 +638,16 @@ class ScraperService:
         return jobs_scraped
 
     async def ingest_new_jobs(self, db: AsyncSession, scraped_jobs: List[Dict], exclude_senior: bool = False):
-        """Saves scraped jobs to the database immediately and enqueues background ATS analysis."""
-        from app.services.ats_queue import ats_worker_queue
+        """Saves scraped jobs to the database immediately with on-demand ATS evaluation upon user interaction."""
         for job_dict in scraped_jobs:
             try:
-                title = job_dict.get("title", "")
+                title = clean_job_title(job_dict.get("title", ""))
+                job_dict["title"] = title
+
+                if not title or is_unrelated_non_tech_title(title):
+                    logger.info(f"Ingestion Non-Tech Gate: blocked non-tech job '{title}'")
+                    continue
+
                 if exclude_senior and is_senior_title(title):
                     logger.info(f"Ingestion Seniority Gate: blocked Senior job '{title}'")
                     continue
@@ -564,7 +661,7 @@ class ScraperService:
                 
                 # 2. Add job record immediately
                 job = Job(
-                    title=job_dict["title"],
+                    title=title,
                     company=job_dict["company"],
                     url=job_dict.get("url"),
                     description=job_dict["description"],
@@ -575,17 +672,15 @@ class ScraperService:
                 db.add(job)
                 await db.flush()
 
-                # 3. Initial placeholder application for status tracking
+                # 3. Initial placeholder application for status tracking (DISCOVERED, on-demand ATS)
                 init_app = Application(
                     job_id=job.id,
-                    status="ANALYZING"
+                    status="DISCOVERED"
                 )
                 db.add(init_app)
                 await db.commit()
 
-                # 4. Enqueue non-blocking background ATS calculation
-                await ats_worker_queue.enqueue(job.id)
-                logger.info(f"Ingested job: {job.title} - {job.company} (enqueued for ATS)")
+                logger.info(f"Ingested job: {job.title} - {job.company} (saved, ATS on-demand)")
             except Exception as e:
                 logger.error(f"Failed to ingest scraped job {job_dict.get('title')}: {e}")
                 await db.rollback()

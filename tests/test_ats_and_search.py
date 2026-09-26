@@ -100,10 +100,16 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any(isinstance(obj, Job) for obj in added_objects))
             self.assertTrue(any(isinstance(obj, Application) for obj in added_objects))
             
+            # Verify newly ingested job is set to DISCOVERED (on-demand ATS)
+            app_obj = next(obj for obj in added_objects if isinstance(obj, Application))
+            self.assertEqual(app_obj.status, "DISCOVERED")
+            self.assertIsNone(app_obj.score)
+
             # Verify commit called and rollback not called
             self.assertEqual(mock_db.commit.call_count, 1)
             self.assertEqual(mock_db.rollback.call_count, 0)
-            self.assertEqual(mock_enqueue.call_count, 1)
+            # ATS is NOT enqueued automatically (avoids rate limits)
+            self.assertEqual(mock_enqueue.call_count, 0)
 
     async def test_application_draft_cache(self):
         from app.services.application_generator import ApplicationGeneratorService, ApplicationDraftSchema
@@ -251,6 +257,69 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 25)
         # All 25 tasks must complete smoothly in less than 2 seconds (no multi-minute compounding delay)
         self.assertLess(t1 - t0, 2.0)
+
+    async def test_on_demand_match_creates_analysis_if_missing(self):
+        from app.services.matching import MatchingService
+        from app.models.db_models import UserProfile, Job, Resume
+        from app.schemas.schemas import MatchResponse, JobAnalysisResponse
+
+        service = MatchingService()
+        service._match_cache.clear()
+
+        user = UserProfile(id=1, name="Dev Test", seniority_level="Junior", technologies=["Python", "FastAPI"], experiences=[])
+        job = Job(id=60, title="Python Jr Developer", company="Startup Tech", description="Vaga de Python Jr com FastAPI")
+        resume = Resume(id=1, version_name="CV Dev", parsed_data={"skills": ["Python"]})
+
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+        mock_result_none = MagicMock()
+        mock_result_none.scalars.return_value.first.return_value = None
+
+        mock_db.execute.return_value = mock_result_none
+
+        dummy_analysis = JobAnalysisResponse(
+            extracted_role="Python Jr Developer",
+            seniority="Junior",
+            location="Remoto",
+            work_mode="Remote",
+            required_skills=["Python"],
+            nice_to_have=[],
+            responsibilities=[],
+            education=[],
+            languages=[],
+            experience_required="1 ano"
+        )
+
+        dummy_match = MatchResponse(
+            score=85,
+            fit="HIGH_MATCH",
+            matched_requirements=["Python"],
+            missing_requirements=[],
+            strengths=["Fit técnico"],
+            risks=[],
+            recommendation=True,
+            explanation="Excelente fit."
+        )
+
+        with patch("app.services.job_analysis.job_analysis_service.analyze_job_description", new_callable=AsyncMock) as mock_analyze, \
+             patch("app.services.llm_service.llm_service.get_structured_output", new_callable=AsyncMock) as mock_llm:
+            
+            mock_analyze.return_value = dummy_analysis
+            mock_llm.return_value = dummy_match
+
+            res = await service.match_job_profile(
+                db=mock_db,
+                job_id=60,
+                job=job,
+                job_analysis=None,
+                user_profile=user,
+                resumes=[resume]
+            )
+
+            # Analysis must be generated on demand when missing
+            self.assertEqual(mock_analyze.call_count, 1)
+            self.assertEqual(res.score, 85)
+            self.assertEqual(res.fit, "HIGH_MATCH")
 
 if __name__ == "__main__":
     unittest.main()

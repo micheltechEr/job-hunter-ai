@@ -236,11 +236,11 @@
                 <div class="flex justify-between items-center mb-3">
                     <div>
                         <h2 class="text-lg font-semibold">Vagas Detectadas</h2>
-                        <p id="ats-counter" class="text-xs text-emerald-700 font-medium mt-0.5">Filtrando por ATS &ge; 80%</p>
+                        <p id="ats-counter" class="text-xs text-gray-600 font-medium mt-0.5">Clique em cada vaga para calcular o ATS sob demanda</p>
                     </div>
                     <div class="flex items-center gap-3">
-                        <label class="inline-flex items-center cursor-pointer text-xs font-medium text-gray-700">
-                            <input type="checkbox" id="toggle-ats-filter" class="sr-only peer" checked>
+                        <label class="inline-flex items-center cursor-pointer text-xs font-medium text-gray-700" title="Exibe apenas vagas avaliadas com Match ATS ≥ 80%">
+                            <input type="checkbox" id="toggle-ats-filter" class="sr-only peer">
                             <div class="relative w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-600"></div>
                             <span class="ms-2 text-xs font-semibold text-gray-600 peer-checked:text-emerald-700">&ge; 80% Match</span>
                         </label>
@@ -382,6 +382,9 @@
 
     <script>
         let currentAppId = null;
+        let currentActiveJobId = null;
+        let currentActiveResumeId = null;
+        let isEvaluatingJob = false;
 
         // Check Gmail auth
         async function checkGmailStatus() {
@@ -774,12 +777,21 @@
 
             const highAtsCount = cachedJobsList.filter(j => {
                 const app = cachedAppsMap[j.id] || j.application;
-                return app && app.score !== null && app.score >= 80;
+                return app && app.score !== null && app.score !== undefined && app.score >= 80;
+            }).length;
+
+            const totalEvaluated = cachedJobsList.filter(j => {
+                const app = cachedAppsMap[j.id] || j.application;
+                return app && app.score !== null && app.score !== undefined;
             }).length;
 
             const counterEl = document.getElementById('ats-counter');
             if (counterEl) {
-                counterEl.innerText = `🎯 ${highAtsCount} vaga(s) com Match ATS ≥ 80% (alta chance de aceite)`;
+                if (onlyAts80) {
+                    counterEl.innerText = `🎯 Exibindo ${highAtsCount} vaga(s) com Match ATS ≥ 80%`;
+                } else {
+                    counterEl.innerText = `Total: ${cachedJobsList.length} vagas (${totalEvaluated} avaliadas | ${highAtsCount} com ATS ≥ 80%)`;
+                }
             }
 
             if (displayedJobs.length === 0) {
@@ -794,27 +806,29 @@
 
             container.innerHTML = displayedJobs.map(j => {
                 const app = cachedAppsMap[j.id] || j.application;
-                let scoreBadge = '';
-                let statusLabel = 'SEM CANDIDATURA';
-                let statusClass = 'bg-gray-100 text-gray-600';
-                let actionText = 'Avaliar ATS / Gerar Candidatura';
+                let scoreBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200">ATS Não calculado</span>';
+                let statusLabel = 'DISCOVERED';
+                let statusClass = 'bg-gray-100 text-gray-600 border border-gray-200';
+                let actionText = '⚡ Calcular ATS / Proposta';
+                let isHigh = false;
                 
                 if (app) {
-                    statusLabel = app.status;
+                    statusLabel = app.status || 'DISCOVERED';
                     if (app.status === 'ANALYZING') {
                         scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 animate-pulse border border-amber-300">⏳ Analisando ATS...</span>`;
                         statusClass = 'bg-amber-50 text-amber-700 border-amber-200 border';
+                        actionText = '⏳ Calculando...';
                     } else if (app.score !== null && app.score !== undefined) {
-                        const isHigh = app.score >= 80;
-                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${isHigh ? 'fit-high font-extrabold shadow-xs' : 'fit-review'}">${isHigh ? '🎯 ATS ' : ''}${app.score}% ${app.fit || ''}</span>`;
+                        isHigh = app.score >= 80;
+                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold border ${isHigh ? 'fit-high font-extrabold shadow-xs' : 'fit-review'}">${isHigh ? '🎯 ATS ' : 'ATS '}${app.score}% ${app.fit || ''}</span>`;
+                        actionText = isHigh ? 'Aprovar / Editar Candidatura' : 'Ver Detalhes ATS / Proposta';
                     }
                     
                     if (app.status === 'SENT') {
                         statusClass = 'bg-emerald-100 text-emerald-800 border-emerald-200';
                         actionText = 'Ver Candidatura Enviada';
-                    } else if (app.status === 'REVIEW') {
-                        statusClass = 'bg-yellow-100 text-amber-800 border-amber-200 border';
-                        actionText = 'Aprovar / Editar Candidatura';
+                    } else if (app.status === 'REVIEW' || app.status === 'HIGH_MATCH') {
+                        statusClass = isHigh ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-yellow-100 text-amber-800 border-amber-200 border';
                     } else if (app.status === 'ARCHIVED') {
                         statusClass = 'bg-red-100 text-red-700';
                         actionText = 'Recriar';
@@ -822,7 +836,7 @@
                 }
 
                 return `
-                    <div class="bg-white p-4 rounded-lg border ${app && app.score >= 80 ? 'border-emerald-300 shadow-sm ring-1 ring-emerald-100' : 'border-gray-200'} hover:border-indigo-400 transition-all flex flex-col justify-between">
+                    <div class="bg-white p-4 rounded-lg border ${isHigh ? 'border-emerald-300 shadow-sm ring-1 ring-emerald-100' : 'border-gray-200'} hover:border-indigo-400 transition-all flex flex-col justify-between cursor-pointer" onclick="selectJobForApproval(${j.id})">
                         <div class="flex justify-between items-start mb-2">
                             <div>
                                 <h4 class="font-bold text-gray-900 leading-tight">${j.title}</h4>
@@ -833,10 +847,10 @@
                                 ${scoreBadge}
                             </div>
                         </div>
-                        <div class="mt-3 flex justify-between items-center">
+                        <div class="mt-3 flex justify-between items-center" onclick="event.stopPropagation()">
                             ${j.url ? `<a href="${j.url}" target="_blank" class="text-xs text-indigo-500 hover:underline flex items-center gap-1"><span>Link externo</span> &nearr;</a>` : '<span></span>'}
-                            <button onclick="selectJobForApproval(${j.id})" class="text-xs font-semibold ${app && app.score >= 80 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700'} py-1.5 px-3 rounded transition">
-                                ${actionText}
+                            <button onclick="selectJobForApproval(${j.id})" class="text-xs font-semibold ${isHigh ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : (app && app.score !== null && app.score !== undefined ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700' : 'bg-indigo-600 hover:bg-indigo-700 text-white')} py-1.5 px-3 rounded transition flex items-center gap-1">
+                                <span>${actionText}</span>
                             </button>
                         </div>
                     </div>
@@ -866,7 +880,7 @@
                 if (autoPollTimeout) clearTimeout(autoPollTimeout);
                 const hasPending = cachedJobsList.some(j => {
                     const app = cachedAppsMap[j.id] || j.application;
-                    return app && (app.status === 'ANALYZING' || app.score === null);
+                    return app && app.status === 'ANALYZING';
                 });
 
                 if (hasPending) {
@@ -900,7 +914,8 @@
             const fit = (appMetrics.fit || 'REVIEW').toUpperCase();
             const badge = document.getElementById('app-badge');
             badge.innerText = `${score >= 80 ? '🎯 ' : ''}${score}% ${fit}`;
-            badge.className = `px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider border fit-${fit.toLowerCase()}`;
+            const fitClass = fit.includes('HIGH') ? 'fit-high' : (fit.includes('GOOD') ? 'fit-good' : (fit.includes('IGNORE') ? 'fit-ignore' : 'fit-review'));
+            badge.className = `px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider border ${fitClass}`;
 
             document.getElementById('ats-score-text').innerText = `${score}%`;
             const bar = document.getElementById('ats-score-bar');
@@ -947,12 +962,15 @@
             // Fill form fields
             document.getElementById('email-recipient').value = appMetrics.recipient_email || '';
             document.getElementById('email-subject').value = appMetrics.email_subject || '';
-            document.getElementById('email-body').value = appMetrics.email_body || '';
+            const rawBody = appMetrics.email_body || '';
+            document.getElementById('email-body').value = rawBody.replace(/\\n/g, '\n');
             document.getElementById('app-notes').value = appMetrics.notes || '';
         }
 
         // Job selection handler for approval central
         async function selectJobForApproval(jobId) {
+            if (isEvaluatingJob) return;
+
             document.getElementById('approval-box-empty').classList.add('hidden');
             const content = document.getElementById('approval-box-content');
             content.classList.remove('hidden');
@@ -967,37 +985,86 @@
             const localJob = cachedJobsList.find(j => j.id === jobId);
             const localApp = (localJob && localJob.application) || cachedAppsMap[jobId];
 
+            // If already evaluated in DB (has score and email_body), fast render
+            if (localApp && localApp.score !== null && localApp.score !== undefined && localApp.email_body) {
+                let jobDetails = localJob;
+                if (!jobDetails || !jobDetails.analysis) {
+                    try {
+                        const resJob = await fetch(`/api/jobs/${jobId}`);
+                        if (resJob.ok) jobDetails = await resJob.json();
+                    } catch (e) {}
+                }
+                const matchMetrics = {
+                    score: localApp.score,
+                    fit: localApp.fit,
+                    explanation: localApp.notes || "Análise de compatibilidade ATS realizada.",
+                    matched_requirements: (jobDetails && jobDetails.analysis && jobDetails.analysis.required_skills) ? jobDetails.analysis.required_skills.slice(0, 5) : [],
+                    missing_requirements: (jobDetails && jobDetails.analysis && jobDetails.analysis.nice_to_have) ? jobDetails.analysis.nice_to_have.slice(0, 3) : []
+                };
+                selectedJobDetailsCache[jobId] = { appMetrics: localApp, matchMetrics, jobDetails: jobDetails || localJob };
+                renderApprovalDetails(localApp, matchMetrics, jobDetails || localJob);
+                return;
+            }
+
+            isEvaluatingJob = true;
+
             // Show quick loading state in approval box while fetching
             if (localJob) {
                 document.getElementById('app-title').innerText = `${localJob.title} - ${localJob.company}`;
             }
+            document.getElementById('app-company').innerText = "CALCULANDO COMPATIBILIDADE ATS COM IA...";
+            document.getElementById('app-badge').innerText = "⏳ PROCESSANDO...";
+            document.getElementById('app-badge').className = "px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider border bg-amber-100 text-amber-800 border-amber-300 animate-pulse";
+            document.getElementById('ats-score-text').innerText = '...';
+            document.getElementById('ats-score-bar').style.width = '100%';
+            document.getElementById('ats-score-bar').className = "bg-indigo-400 h-2 rounded-full animate-pulse transition-all duration-300";
+            document.getElementById('ats-explanation').innerText = '⏳ Analisando requisitos da vaga e calculando score ATS sob demanda com IA...';
+            document.getElementById('app-strengths').innerHTML = '<li class="italic text-gray-400 animate-pulse">Avaliando compatibilidade com IA...</li>';
+            document.getElementById('app-gaps').innerHTML = '<li class="italic text-gray-400 animate-pulse">Avaliando compatibilidade com IA...</li>';
+            document.getElementById('email-recipient').value = '';
+            document.getElementById('email-subject').value = 'Gerando assunto personalizado...';
+            document.getElementById('email-body').value = 'Processando análise da vaga e elaborando candidatura personalizada sob demanda...';
+            document.getElementById('btn-save-draft').disabled = true;
+            document.getElementById('btn-send-email').disabled = true;
+            if (document.getElementById('btn-tailor-cv')) document.getElementById('btn-tailor-cv').disabled = true;
 
             try {
-                // Generate or retrieve application record
+                // Generate or retrieve application record (on-demand ATS calculation)
                 const res = await fetch(`/api/jobs/${jobId}/generate-application`, { method: 'POST' });
                 if (!res.ok) {
                     const err = await res.json();
-                    alert("Erro ao montar proposta: " + (err.detail || "Consulte logs"));
+                    alert("Erro ao calcular ATS / montar proposta: " + (err.detail || "Consulte logs"));
                     resetApprovalBox();
                     return;
                 }
                 
                 const appMetrics = await res.json();
 
-                // Get job details
+                // Get job details with analysis
                 let jobDetails = localJob;
-                if (!jobDetails) {
+                try {
                     const resJob = await fetch(`/api/jobs/${jobId}`);
-                    jobDetails = await resJob.json();
+                    if (resJob.ok) {
+                        jobDetails = await resJob.json();
+                    }
+                } catch (je) {
+                    console.debug("Could not fetch extra job details:", je);
                 }
 
-                // Construct match summary directly from application metrics
+                // Construct match summary directly from application and analysis metrics
+                const matchedReqs = (jobDetails && jobDetails.analysis && jobDetails.analysis.required_skills && jobDetails.analysis.required_skills.length)
+                    ? jobDetails.analysis.required_skills.slice(0, 5)
+                    : ['Requisitos compatíveis identificados'];
+                const missingReqs = (jobDetails && jobDetails.analysis && jobDetails.analysis.nice_to_have && jobDetails.analysis.nice_to_have.length)
+                    ? jobDetails.analysis.nice_to_have.slice(0, 3)
+                    : ['Nenhum gap crítico impeditivo'];
+
                 const matchMetrics = {
                     score: appMetrics.score,
                     fit: appMetrics.fit,
-                    explanation: appMetrics.notes || "Análise preliminar estruturada do perfil e da vaga.",
-                    matched_requirements: [],
-                    missing_requirements: []
+                    explanation: appMetrics.notes || "Análise de compatibilidade ATS realizada sob demanda.",
+                    matched_requirements: matchedReqs,
+                    missing_requirements: missingReqs
                 };
 
                 // Save to local cache for instant reopening
@@ -1007,13 +1074,28 @@
                     jobDetails: jobDetails
                 };
                 cachedAppsMap[jobId] = appMetrics;
+                if (localJob) {
+                    localJob.application = appMetrics;
+                    if (jobDetails && jobDetails.analysis) {
+                        localJob.analysis = jobDetails.analysis;
+                    }
+                }
 
+                // Re-enable buttons
+                document.getElementById('btn-save-draft').disabled = false;
+                document.getElementById('btn-send-email').disabled = false;
+                if (document.getElementById('btn-tailor-cv')) document.getElementById('btn-tailor-cv').disabled = false;
+
+                // Immediately update job cards in list so the new score badge is displayed
+                renderFilteredJobs();
                 renderApprovalDetails(appMetrics, matchMetrics, jobDetails);
 
             } catch (err) {
                 console.error("Error opening approval details:", err);
                 alert("Erro ao carregar detalhes da aprovação: " + err);
                 resetApprovalBox();
+            } finally {
+                isEvaluatingJob = false;
             }
         }
 

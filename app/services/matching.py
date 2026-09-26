@@ -46,7 +46,25 @@ class MatchingService:
             result_analysis = await db.execute(select(JobAnalysis).where(JobAnalysis.job_id == job_id))
             job_analysis = result_analysis.scalars().first()
             if not job_analysis:
-                raise ValueError(f"Analysis for job id {job_id} not found.")
+                from app.services.job_analysis import job_analysis_service
+                analysis_data = await job_analysis_service.analyze_job_description(job.description or job.title)
+                job_analysis = JobAnalysis(
+                    job_id=job.id,
+                    extracted_role=analysis_data.extracted_role,
+                    seniority=analysis_data.seniority,
+                    location=analysis_data.location,
+                    work_mode=analysis_data.work_mode,
+                    required_skills=analysis_data.required_skills,
+                    nice_to_have=analysis_data.nice_to_have,
+                    responsibilities=analysis_data.responsibilities,
+                    education=analysis_data.education,
+                    languages=analysis_data.languages,
+                    experience_required=analysis_data.experience_required,
+                    raw_json=analysis_data.model_dump() if hasattr(analysis_data, "model_dump") else analysis_data.dict()
+                )
+                db.add(job_analysis)
+                await db.commit()
+                await db.refresh(job_analysis)
 
         # 2. Fetch all Resumes if not provided
         if resumes is None:

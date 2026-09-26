@@ -32,8 +32,7 @@ logger = logging.getLogger("job_hunter.api.jobs")
 @router.post("/", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
     """
-    Receives a new job, persists it instantly to database so it is immediately searchable,
-    and enqueues background ATS analysis to avoid blocking user interaction.
+    Receives a new job, persists it instantly to database with on-demand ATS evaluation.
     """
     try:
         # 1. Create and save job record immediately
@@ -49,18 +48,15 @@ async def create_job(job_in: JobCreate, db: AsyncSession = Depends(get_db)):
         db.add(job)
         await db.flush()
 
-        # 2. Attach initial placeholder application
+        # 2. Attach initial placeholder application (DISCOVERED, ready for on-demand ATS on click)
         init_app = Application(
             job_id=job.id,
-            status="ANALYZING"
+            status="DISCOVERED"
         )
         db.add(init_app)
         await db.commit()
 
-        # 3. Enqueue background ATS calculation (Non-blocking)
-        await ats_worker_queue.enqueue(job.id)
-
-        # 4. Fetch full job object with relations
+        # 3. Fetch full job object with relations
         result = await db.execute(
             select(Job)
             .options(selectinload(Job.analysis), selectinload(Job.application))
@@ -192,9 +188,24 @@ async def delete_job(job_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{job_id}/match", response_model=MatchResponse)
 async def match_job(job_id: int, db: AsyncSession = Depends(get_db)):
-    """Computes similarity metrics and matches candidate CV qualifications with job traits applying ATS methodology."""
+    """Computes similarity metrics and matches candidate CV qualifications with job traits applying ATS methodology on-demand."""
     try:
-        match_result = await matching_service.match_job_profile(db, job_id)
+        match_result = await matching_service.match_job_profile(db=db, job_id=job_id)
+
+        # Persist score and fit to the application record in database
+        res_app = await db.execute(select(Application).where(Application.job_id == job_id))
+        app = res_app.scalars().first()
+        if not app:
+            app = Application(job_id=job_id)
+            db.add(app)
+        app.score = match_result.score
+        app.fit = match_result.fit
+        app.resume_id = match_result.recommended_resume_id
+        if match_result.explanation:
+            app.notes = match_result.explanation
+        if app.status in ("DISCOVERED", "ANALYZING", None):
+            app.status = "HIGH_MATCH" if match_result.score >= 80 else ("REVIEW" if match_result.score >= 60 else "DISCOVERED")
+        await db.commit()
         return match_result
     except ValueError as val_ex:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(val_ex))
@@ -286,7 +297,8 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
             app_record.fit = match_res.fit
             app_record.email_subject = draft.subject
             app_record.email_body = draft.body
-            app_record.status = "REVIEW" if match_res.score >= 60 else "DISCOVERED"
+            app_record.notes = match_res.explanation or app_record.notes
+            app_record.status = "HIGH_MATCH" if match_res.score >= 80 else ("REVIEW" if match_res.score >= 60 else "DISCOVERED")
         else:
             app_record = Application(
                 job_id=job_id,
@@ -296,7 +308,8 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
                 fit=match_res.fit,
                 email_subject=draft.subject,
                 email_body=draft.body,
-                status="REVIEW"
+                notes=match_res.explanation,
+                status="HIGH_MATCH" if match_res.score >= 80 else ("REVIEW" if match_res.score >= 60 else "DISCOVERED")
             )
             db.add(app_record)
 
