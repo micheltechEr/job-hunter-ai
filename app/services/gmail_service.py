@@ -52,7 +52,12 @@ class GmailService:
                     token.write(creds.to_json())
                 return True
         except Exception as e:
-            logger.error(f"Failed to check Gmail credentials validity: {e}")
+            logger.warning(f"Gmail credentials expired or invalid ({e}). Resetting token status.")
+            try:
+                if os.path.exists(self.token_path):
+                    os.remove(self.token_path)
+            except Exception:
+                pass
         return False
 
     def _save_verifier(self, state: str, verifier: str):

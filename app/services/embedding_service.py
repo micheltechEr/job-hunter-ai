@@ -73,25 +73,12 @@ class EmbeddingService:
             self._cache[cache_key] = vec
             return vec
         except Exception as e:
-            err_str = str(e).lower()
-            if "no credentials" in err_str or "400" in err_str or "not found" in err_str or "invalid_request_error" in err_str:
-                self._embeddings_disabled = True
-                logger.info(f"Embedding endpoint unavailable on proxy ({e}). Switched to local deterministic vectorizer.")
-                local_vec = _local_text_vector(text)
-                self._cache[cache_key] = local_vec
-                return local_vec
-
-            try:
-                response = await execute_with_llm_protection(_call_embedding, "text-embedding-ada-002")
-                vec = response.data[0].embedding
-                self._cache[cache_key] = vec
-                return vec
-            except Exception as ex:
-                self._embeddings_disabled = True
-                logger.info(f"All external embedding models disabled ({ex}). Using local deterministic vectorizer.")
-                local_vec = _local_text_vector(text)
-                self._cache[cache_key] = local_vec
-                return local_vec
+            # Switch permanently to local deterministic vectorizer on any credential/proxy/bad request failure
+            self._embeddings_disabled = True
+            logger.info(f"Embedding endpoint unavailable on proxy ({e}). Switched to local deterministic vectorizer permanently.")
+            local_vec = _local_text_vector(text)
+            self._cache[cache_key] = local_vec
+            return local_vec
 
     @staticmethod
     def calculate_similarity(v1: List[float], v2: List[float]) -> float:

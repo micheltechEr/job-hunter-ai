@@ -64,7 +64,7 @@ async def execute_with_llm_protection(
 ) -> Any:
     """
     Executes an async LLM/Embedding call with:
-    1. Concurrency and RPM throttling.
+    1. Concurrency and RPM throttling with guaranteed semaphore release.
     2. Exponential backoff with full jitter on 429 RateLimitError, timeouts, and temporary 5xx errors.
     """
     max_retries = settings.LLM_MAX_RETRIES
@@ -76,7 +76,6 @@ async def execute_with_llm_protection(
         try:
             return await func(*args, **kwargs)
         except (openai.RateLimitError, openai.APIConnectionError, openai.APITimeoutError, openai.InternalServerError) as e:
-            llm_rate_limiter.release()
             if attempt == max_retries:
                 logger.error(f"LLM call failed after {max_retries} attempts due to: {e}")
                 raise e
@@ -88,10 +87,7 @@ async def execute_with_llm_protection(
                 f"Attempt {attempt}/{max_retries}. Backing off for {delay:.2f}s..."
             )
             await asyncio.sleep(delay)
-        except Exception as e:
-            llm_rate_limiter.release()
-            raise e
-        else:
+        finally:
             llm_rate_limiter.release()
 
 

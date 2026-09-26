@@ -249,9 +249,10 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
         resumes = res_resumes.scalars().all()
 
         # 3. Ensure analysis exists (create once if missing)
-        if not job.analysis:
-            analysis_data = await job_analysis_service.analyze_job_description(job.description)
-            db_analysis = JobAnalysis(
+        target_analysis = job.analysis
+        if not target_analysis:
+            analysis_data = await job_analysis_service.analyze_job_description(job.description or job.title)
+            target_analysis = JobAnalysis(
                 job_id=job.id,
                 extracted_role=analysis_data.extracted_role,
                 seniority=analysis_data.seniority,
@@ -265,23 +266,23 @@ async def generate_application_endpoint(job_id: int, db: AsyncSession = Depends(
                 experience_required=analysis_data.experience_required,
                 raw_json=analysis_data.model_dump() if hasattr(analysis_data, "model_dump") else analysis_data.dict()
             )
-            db.add(db_analysis)
+            db.add(target_analysis)
             await db.commit()
-            await db.refresh(job)
+            await db.refresh(target_analysis)
 
         # 4. Parallel Execution: Run ATS Match and Application Email Draft concurrently
         match_task = matching_service.match_job_profile(
             db=db,
             job_id=job_id,
             job=job,
-            job_analysis=job.analysis,
+            job_analysis=target_analysis,
             user_profile=user_prof,
             resumes=resumes
         )
         draft_task = application_generator_service.generate_draft(
             user_profile=user_prof,
             job=job,
-            job_class=job.analysis
+            job_class=target_analysis
         )
 
         match_res, draft = await asyncio.gather(match_task, draft_task)
