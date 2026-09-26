@@ -32,22 +32,42 @@ KEY_TECH_WEIGHTS: Dict[str, float] = {
 }
 
 
+from app.services.semantic_normalizer import semantic_normalizer, TECH_TAXONOMY_REGISTRY
+
+
 def _local_text_vector(text: str, dim: int = 384) -> List[float]:
-    """Generates a high-precision deterministic domain-weighted semantic embedding vector locally with 0 API calls."""
+    """
+    Generates a high-precision deterministic domain-weighted semantic embedding vector locally.
+    Performs full semantic normalization and canonical taxonomy classification prior to vectorization.
+    """
     if not text:
         return [0.0] * dim
 
-    t = text.lower()
+    # 1. Semantic Classification & Disambiguation Pass
+    norm_profile = semantic_normalizer.normalize_text_entities(text)
+
     vec = np.zeros(dim, dtype=np.float32)
 
-    # 1. Tech stack weighted features
+    # 2. Canonical Entities Layer (Heavily weighted, orthogonal hash slots)
+    for entity_id in norm_profile.canonical_entities:
+        h = int(hashlib.sha256(('canonical_entity_' + entity_id).encode('utf-8')).hexdigest(), 16) % dim
+        # Primary language entities carry higher discriminant weight
+        weight = 8.0 if any(item.canonical_id == entity_id and item.category == "language" for item in TECH_TAXONOMY_REGISTRY) else 5.0
+        vec[h] += weight
+
+    # 3. Ecosystem Cluster Layer
+    for eco in norm_profile.ecosystems_present:
+        h = int(hashlib.sha256(('canonical_eco_' + eco).encode('utf-8')).hexdigest(), 16) % dim
+        vec[h] += 4.0
+
+    # 4. Keyword & Token Level Layer
+    t = text.lower()
     for tech, weight in KEY_TECH_WEIGHTS.items():
         pattern = r'\b' + re.escape(tech) + r'\b'
         if re.search(pattern, t):
             h = int(hashlib.md5(('tech_' + tech).encode('utf-8')).hexdigest(), 16) % dim
             vec[h] += weight
 
-    # 2. Subword and token level features
     words = re.findall(r'\b[a-zA-Z0-9_#\.\+-]{2,}\b', t)
     for w in words:
         h = int(hashlib.md5(('word_' + w).encode('utf-8')).hexdigest(), 16) % dim

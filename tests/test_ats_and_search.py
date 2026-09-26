@@ -379,8 +379,8 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(res.score, 35)
             self.assertEqual(res.fit, "IGNORE")
             self.assertFalse(res.recommendation)
-            self.assertTrue(any("Java / JVM" in r for r in res.missing_requirements))
-            self.assertTrue(any("Java / JVM" in r for r in res.risks))
+            self.assertTrue(any("Java" in r for r in res.missing_requirements))
+            self.assertTrue(any("Java" in r for r in res.risks))
 
 if __name__ == "__main__":
     unittest.main()

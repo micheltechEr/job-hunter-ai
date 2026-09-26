@@ -11,6 +11,7 @@ from app.schemas.schemas import MatchResponse
 from app.services.embedding_service import embedding_service
 from app.services.llm_service import llm_service
 from app.services.scraper_service import is_senior_title
+from app.services.semantic_normalizer import semantic_normalizer, NormalizedSemanticProfile
 
 logger = logging.getLogger("job_hunter.matching")
 
@@ -172,7 +173,7 @@ class MatchingService:
         job_req_skills = [s.strip() for s in (job_analysis.required_skills or [])]
         matched_quick = [s for s in job_req_skills if any(u in s.lower() or s.lower() in u for u in user_techs)]
 
-        # Check primary language ecosystem compatibility
+        # 5. Semantic Normalization & Classification Pass
         job_full_content = f"{job.title} {job.description or ''} {' '.join(job_analysis.required_skills or [])}"
         exp_parts = []
         for e in (user_profile.experiences or []):
@@ -181,10 +182,13 @@ class MatchingService:
             skills_str = " ".join(e.skills_used or [])
             exp_parts.append(f"{role_str} {desc_str} {skills_str}")
         cand_full_content = f"{' '.join(user_profile.technologies or [])} {' '.join(user_profile.databases or [])} {' '.join(user_profile.devops_tools or [])} {' '.join(exp_parts)}"
-        
-        missing_stacks = detect_missing_primary_stack(job_full_content, cand_full_content)
 
-        # 6. Call LLM applying strict ATS methodology (streamlined prompt)
+        cand_semantic = semantic_normalizer.normalize_text_entities(cand_full_content)
+        job_semantic = semantic_normalizer.normalize_text_entities(job_full_content)
+
+        is_stack_compat, matched_canonical, missing_mandatory_languages = semantic_normalizer.audit_stack_compatibility(cand_semantic, job_semantic)
+
+        # 6. Call LLM applying strict ATS methodology
         candidate_seniority = user_profile.seniority_level or "Junior"
         candidate_exp_years = user_profile.years_of_experience or 0.0
         job_is_senior = (job_analysis.seniority and "senior" in job_analysis.seniority.lower()) or is_senior_title(job.title)
@@ -197,10 +201,10 @@ class MatchingService:
             "3. Responsabilidades & Domínio (15%): Entregas e arquitetura.\n"
             "4. Localização & Modalidade (10%): Remoto/Híbrido/Presencial.\n"
             "5. Diferenciais (10%): Nice to have e diferenciais.\n\n"
-            "REGRAS DE GATING DE HARD SKILLS E SENIORIDADE:\n"
-            "- Se a vaga exigir uma linguagem/stack primária obrigatória (ex: Java, C#, Python, Golang, Ruby) que NÃO conste no perfil do candidato, DESQUALIFIQUE: pontuação máxima de 35%, fit='IGNORE', recommendation=False e declare o gap técnico nos risks.\n"
-            "- Se a vaga for Sênior/Lead/Staff e o candidato for Júnior ou Pleno com menos de 4 anos de experiência, DESQUALIFIQUE: pontuação máxima de 35%, fit='IGNORE', recommendation=False e declare o gap de senioridade nos risks.\n"
-            "- Vagas compatíveis com a senioridade real do candidato (Júnior/Pleno) e com stack alinhada devem ser avaliadas normalmente.\n\n"
+            "REGRAS CRÍTICAS DE HARD SKILLS E DESAMBIGUAÇÃO:\n"
+            "- AVISO FORMAL: JavaScript e TypeScript NÃO SÃO Java. C# NÃO É C. Não confunda ecossistemas.\n"
+            "- Se a vaga exige uma linguagem/stack primária (ex: Java/JVM, C#/.NET, Python, Golang, Ruby) ausente no perfil do candidato, DESQUALIFIQUE: score máximo de 25%, fit='IGNORE', recommendation=False.\n"
+            "- Se a vaga for Sênior/Lead/Staff e o candidato for Júnior ou Pleno com menos de 4 anos de experiência, DESQUALIFIQUE: score máximo de 35%, fit='IGNORE', recommendation=False.\n\n"
             "Critérios de Classificação:\n"
             "- >= 80%: HIGH_MATCH (recommendation=True)\n"
             "- 60 a 79%: GOOD_MATCH (recommendation=False)\n"
@@ -210,6 +214,12 @@ class MatchingService:
         )
 
         user_prompt = f"""
+AUDITORIA SEMÂNTICA CANÔNICA DE STACK (PRÉ-VALIDADA):
+- Linguagens / Tecnologias do Candidato: {', '.join(cand_semantic.display_entities)}
+- Tecnologias Identificadas na Vaga: {', '.join(job_semantic.display_entities)}
+- Tecnologias Canônicas em Comum: {', '.join(matched_canonical) if matched_canonical else 'Nenhuma tecnologia em comum'}
+- LINGUAGENS OBRIGATÓRIAS FALTANTES: {', '.join(missing_mandatory_languages) if missing_mandatory_languages else 'Nenhuma (Stack alinhada)'}
+
 CANDIDATO:
 Nome: {user_profile.name}
 Senioridade Real: {candidate_seniority} (~{candidate_exp_years} anos de experiência)
@@ -244,17 +254,18 @@ Skills já pré-identificadas no candidato: {', '.join(matched_quick) if matched
                     match_data.risks.append(seniority_risk)
 
             # Deterministic Primary Stack Guard: Enforce disqualification if required language ecosystem is absent
-            if missing_stacks:
-                if match_data.score > 35:
-                    match_data.score = 35
+            if not is_stack_compat or missing_mandatory_languages:
+                if match_data.score > 25:
+                    match_data.score = 25
                 match_data.fit = "IGNORE"
                 match_data.recommendation = False
-                for s in missing_stacks:
+                for s in missing_mandatory_languages:
                     stack_risk = f"Incompatibilidade crítica de stack: Vaga exige {s}, ausente no histórico técnico do candidato."
                     if stack_risk not in match_data.risks:
                         match_data.risks.append(stack_risk)
                     if s not in match_data.missing_requirements:
                         match_data.missing_requirements.append(s)
+                match_data.explanation = f"Desqualificado no ATS: A vaga exige {', '.join(missing_mandatory_languages)}, tecnologia ausente no histórico do candidato (stack focada em {', '.join(cand_semantic.primary_languages)})."
 
             if best_resume:
                 match_data.recommended_resume_id = best_resume.id
