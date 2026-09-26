@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     COHERE_API_KEY: str = Field(default="")
     HF_API_KEY: str = Field(default="")
 
+    # LinkedIn Persistent Session Settings
+    LINKEDIN_STORAGE_STATE_PATH: str = Field(default="")
+    LINKEDIN_COOKIE_LI_AT: str = Field(default="")
+    LINKEDIN_BROWSER_PROFILE_DIR: str = Field(default="")
+
     # API Rate Limiting
     API_RATE_LIMIT_PER_MINUTE: int = Field(default=120)
 

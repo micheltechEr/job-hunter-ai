@@ -191,9 +191,28 @@ class ScraperService:
         url = f"https://www.linkedin.com/jobs/search?keywords={kw_encoded}&location={loc_encoded}&f_TPR=r604800&position=1&pageNum=0"
         logger.info(f"Scraping LinkedIn: {url} (exclude_senior={exclude_senior})")
 
+        from app.services.linkedin_auth import get_linkedin_storage_state_path
+        state_file = get_linkedin_storage_state_path()
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-            context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            context_kwargs: Dict[str, Any] = {
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            if state_file:
+                logger.info(f"Using authenticated LinkedIn persistent session: {state_file}")
+                context_kwargs["storage_state"] = str(state_file)
+
+            context = await browser.new_context(**context_kwargs)
+            if settings.LINKEDIN_COOKIE_LI_AT and not state_file:
+                await context.add_cookies([{
+                    "name": "li_at",
+                    "value": settings.LINKEDIN_COOKIE_LI_AT,
+                    "domain": ".www.linkedin.com",
+                    "path": "/",
+                    "httpOnly": True,
+                    "secure": True
+                }])
             page = await context.new_page()
             try:
                 await page.goto(url, timeout=30000, wait_until="domcontentloaded")

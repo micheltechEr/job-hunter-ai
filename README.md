@@ -91,7 +91,12 @@ Onde $n$ é o número da tentativa atual e $\mathcal{U}(a, b)$ é uma variável 
 - `app/services/embedding_service.py`: Motor de álgebra vetorial, cosine similarity e cache de embeddings.
 - `app/services/job_analysis.py`: Extração estruturada de requisitos de vagas com cache por hash.
 - `app/services/matching.py`: Engine de triagem ATS, cruzamento heurístico de hard skills e ranqueamento.
-- `app/services/scraper_service.py`: Scrapers com Playwright para LinkedIn, Programathor e Gupy com ingestão não-bloqueante.
+- `app/services/scraper_service.py`: Scrapers com Playwright para LinkedIn, InfoJobs, Gupy, Trabalha Brasil, Programathor e Indeed com ingestão não-bloqueante e suporte a sessão autenticada.
+- `app/services/linkedin_auth.py`: Gerenciamento de sessão persistente (`storage_state.json`) e login interativo do LinkedIn.
+- `app/services/candidate_profile_builder.py`: Construtor do contrato canônico `CandidateSearchProfile` v1.0.
+- `app/services/query_generator.py`: Gerador isolado de consultas com 4 camadas progressivas e 6 estratégias de busca.
+- `app/services/publication_normalizer.py`: Normalizador determinístico de publicações com padrão `UNKNOWN`.
+- `app/services/publication_matcher.py`: Matching híbrido (regras determinísticas + embeddings semânticos) com explicabilidade e rastreador de performance.
 - `app/services/scheduler.py`: Agendador periódico APScheduler de buscas automáticas.
 - `app/templates/`: Central dashboard em HTML Jinja2 com busca e filtros reativos em tempo real.
 
@@ -117,6 +122,30 @@ Onde $n$ é o número da tentativa atual e $\mathcal{U}(a, b)$ é uma variável 
    - Crie uma tela de consentimento OAuth e adicione os escopos `https://www.googleapis.com/auth/gmail.send` e `https://www.googleapis.com/auth/userinfo.email`.
    - Adicione a URI de redirecionamento autorizada: `http://localhost:8000/api/gmail/callback`.
    - Faça o download do arquivo de Client OAuth2 JSON e salve como `credentials.json` na raiz do projeto.
+
+5. **Autenticação e Sessão Persistente no LinkedIn (Opcional para Feed Privado / Posts):**
+   - Para buscas públicas de vagas (`/jobs/search`), o sistema opera automaticamente em modo anônimo (zero login necessário).
+   - Para autenticar uma sessão persistente reutilizável em todas as buscas:
+     ```bash
+     uv run python -m app.services.linkedin_auth
+     ```
+     Uma janela do Chromium abrirá. Faça login uma única vez no LinkedIn e pressione ENTER no terminal para salvar o arquivo de sessão `storage_state.json`. Todas as requisições futuras do scraper reutilizarão essa sessão autenticada.
+   - Alternativamente, defina `LINKEDIN_COOKIE_LI_AT` no seu arquivo `.env`.
+
+---
+
+## Pipeline do LinkedIn & Candidate Search Profile
+
+```
+CURRÍCULO (PDF) ──► CandidateSearchProfile (JSON v1.0) ──► QueryGenerator (4 Camadas / 6 Estratégias)
+                                                                   │
+                                                                   ▼
+RELEVÂNCIA & EXPLICABILIDADE ◄── Matching Híbrido ◄── PublicationNormalizer ◄── LinkedIn Scraper
+```
+
+- **CandidateSearchProfile (v1.0):** Contrato intermediário estruturado (`identity`, `target`, `skills`, `experience`, `domains`, `preferences`, `search_vocabulary`).
+- **QueryGenerator:** Gera progressivamente consultas L1 (Alta Precisão), L2 (Expansão de Sinônimos), L3 (Descoberta Técnica) e L4 (Domínio de Negócio).
+- **Matching Híbrido:** Avalia regras determinísticas (cargos, hard skills, senioridade, modalidade) combinadas com similaridade de embeddings vetoriais com explicabilidade ponto a ponto.
 
 ---
 
