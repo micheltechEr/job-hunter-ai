@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     LLM_RETRY_BASE_DELAY: float = Field(default=2.0)
     LLM_RETRY_MAX_DELAY: float = Field(default=30.0)
 
+    # Agnostic Embedding Provider Settings (auto, openai, gemini, cohere, huggingface, local)
+    EMBEDDING_PROVIDER: str = Field(default="auto")
+    EMBEDDING_API_KEY: str = Field(default="")
+    EMBEDDING_BASE_URL: str = Field(default="")
+    EMBEDDING_MODEL: str = Field(default="text-embedding-3-small")
+    GEMINI_API_KEY: str = Field(default="")
+    COHERE_API_KEY: str = Field(default="")
+    HF_API_KEY: str = Field(default="")
+
     # API Rate Limiting
     API_RATE_LIMIT_PER_MINUTE: int = Field(default=120)
 

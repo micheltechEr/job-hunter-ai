@@ -8,8 +8,11 @@ from app.schemas.schemas import JobAnalysisResponse
 
 class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
     async def test_embedding_cache(self):
+        from app.services.embedding_service import OpenAICompatibleEmbeddingProvider
         service = EmbeddingService()
         service._cache.clear()
+        service._fallback_active = False
+        service._provider = OpenAICompatibleEmbeddingProvider()
 
         # Mock client embeddings
         mock_resp = MagicMock()
@@ -17,7 +20,7 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
         mock_item.embedding = [0.1, 0.2, 0.3]
         mock_resp.data = [mock_item]
 
-        with patch.object(service.client.embeddings, "create", new_callable=AsyncMock) as mock_create:
+        with patch.object(service._provider.client.embeddings, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_resp
 
             vec1 = await service.get_embedding("Desenvolvedor Python Pleno")
@@ -28,6 +31,53 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
             vec2 = await service.get_embedding("Desenvolvedor Python Pleno")
             self.assertEqual(vec2, [0.1, 0.2, 0.3])
             self.assertEqual(mock_create.call_count, 1)
+
+    async def test_agnostic_embedding_providers(self):
+        from app.services.embedding_service import (
+            LocalDeterministicProvider,
+            GeminiEmbeddingProvider,
+            CohereEmbeddingProvider,
+            HuggingFaceEmbeddingProvider
+        )
+
+        # 1. Local Deterministic Provider
+        local_prov = LocalDeterministicProvider(dim=384)
+        vec_local = await local_prov.get_embedding("Desenvolvedor Full Stack React Node")
+        self.assertEqual(len(vec_local), 384)
+        self.assertIsInstance(vec_local[0], float)
+
+        # 2. Gemini Provider (Mocked REST)
+        gemini_prov = GeminiEmbeddingProvider(api_key="test-gemini-key")
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {"embedding": {"values": [0.1, 0.5, 0.9]}}
+            mock_resp.raise_for_status = MagicMock()
+            mock_post.return_value = mock_resp
+
+            vec_gemini = await gemini_prov.get_embedding("Desenvolvedor Python")
+            self.assertEqual(vec_gemini, [0.1, 0.5, 0.9])
+
+        # 3. Cohere Provider (Mocked REST)
+        cohere_prov = CohereEmbeddingProvider(api_key="test-cohere-key")
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {"embeddings": {"float": [[0.2, 0.4, 0.6]]}}
+            mock_resp.raise_for_status = MagicMock()
+            mock_post.return_value = mock_resp
+
+            vec_cohere = await cohere_prov.get_embedding("Desenvolvedor Java")
+            self.assertEqual(vec_cohere, [0.2, 0.4, 0.6])
+
+        # 4. Hugging Face Provider (Mocked REST)
+        hf_prov = HuggingFaceEmbeddingProvider(api_key="test-hf-key")
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = [0.3, 0.6, 0.9]
+            mock_resp.raise_for_status = MagicMock()
+            mock_post.return_value = mock_resp
+
+            vec_hf = await hf_prov.get_embedding("Desenvolvedor Rust")
+            self.assertEqual(vec_hf, [0.3, 0.6, 0.9])
 
     async def test_job_analysis_cache(self):
         service = JobAnalysisService()
