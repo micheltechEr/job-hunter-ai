@@ -10,20 +10,49 @@ from app.services.rate_limiter import execute_with_llm_protection
 logger = logging.getLogger("job_hunter.embedding_service")
 
 
-def _local_text_vector(text: str, dim: int = 256) -> List[float]:
-    """Generates a deterministic normalized term-frequency embedding vector locally with 0 API calls."""
+KEY_TECH_WEIGHTS: Dict[str, float] = {
+    # JVM Ecosystem
+    'java': 6.0, 'java 8': 6.5, 'java 11': 6.5, 'java 17': 6.5, 'spring': 5.0, 'springboot': 5.0, 'spring boot': 5.0, 'hibernate': 4.0, 'quarkus': 4.5, 'jvm': 4.0, 'kotlin': 4.5,
+    # .NET Ecosystem
+    'c#': 6.0, 'csharp': 6.0, '.net': 5.0, 'dotnet': 5.0, 'asp.net': 5.0, 'entity framework': 4.0,
+    # Python Ecosystem
+    'python': 6.0, 'django': 5.0, 'fastapi': 5.0, 'flask': 4.0, 'pandas': 4.0, 'pytorch': 4.5, 'tensorflow': 4.5,
+    # JS / TS Ecosystem
+    'typescript': 5.5, 'javascript': 5.0, 'react': 5.0, 'react.js': 5.0, 'nodejs': 5.5, 'node.js': 5.5, 'node': 4.5, 'nestjs': 5.0, 'nest.js': 5.0, 'next.js': 4.5, 'vue': 4.5, 'angular': 4.5,
+    # PHP Ecosystem
+    'php': 5.5, 'laravel': 5.0, 'symfony': 4.5, 'twig': 3.5,
+    # Other primary languages
+    'golang': 6.0, 'go': 5.0, 'rust': 6.0, 'ruby': 6.0, 'rails': 5.0, 'c++': 6.0, 'cpp': 6.0, 'swift': 5.5, 'flutter': 5.0,
+    # Databases
+    'sql': 4.0, 'postgresql': 4.5, 'postgres': 4.5, 'mysql': 4.5, 'oracle': 4.5, 'sql server': 4.5, 'mongodb': 4.0, 'redis': 4.0, 'supabase': 4.0,
+    # Cloud & DevOps
+    'aws': 4.0, 'azure': 4.0, 'gcp': 4.0, 'docker': 4.0, 'kubernetes': 4.5, 'ci/cd': 3.5, 'git': 3.5, 'linux': 3.5,
+    # Domains & Roles
+    'backend': 4.0, 'frontend': 4.0, 'fullstack': 4.0, 'dados': 4.0, 'data': 4.0, 'ia': 4.0, 'ai': 4.0, 'machine learning': 4.5, 'rag': 4.0
+}
+
+
+def _local_text_vector(text: str, dim: int = 384) -> List[float]:
+    """Generates a high-precision deterministic domain-weighted semantic embedding vector locally with 0 API calls."""
     if not text:
         return [0.0] * dim
-    
-    words = re.findall(r"\w+", text.lower())
-    if not words:
-        return [0.0] * dim
-    
+
+    t = text.lower()
     vec = np.zeros(dim, dtype=np.float32)
-    for word in words:
-        h = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16) % dim
+
+    # 1. Tech stack weighted features
+    for tech, weight in KEY_TECH_WEIGHTS.items():
+        pattern = r'\b' + re.escape(tech) + r'\b'
+        if re.search(pattern, t):
+            h = int(hashlib.md5(('tech_' + tech).encode('utf-8')).hexdigest(), 16) % dim
+            vec[h] += weight
+
+    # 2. Subword and token level features
+    words = re.findall(r'\b[a-zA-Z0-9_#\.\+-]{2,}\b', t)
+    for w in words:
+        h = int(hashlib.md5(('word_' + w).encode('utf-8')).hexdigest(), 16) % dim
         vec[h] += 1.0
-    
+
     norm = np.linalg.norm(vec)
     if norm > 0:
         vec = vec / norm

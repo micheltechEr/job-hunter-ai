@@ -15,6 +15,34 @@ from app.services.scraper_service import is_senior_title
 logger = logging.getLogger("job_hunter.matching")
 
 
+PRIMARY_TECH_ECOSYSTEMS = [
+    ("Java / JVM", [r"\bjava\s*8\b", r"\bjava\s*11\b", r"\bjava\s*17\b", r"\bjava\b", r"\bspring\s*boot\b", r"\bspring\b", r"\bhibernate\b", r"\bquarkus\b", r"\bjvm\b", r"\bkotlin\b"]),
+    ("C# / .NET", [r"\bc#\b", r"\bcsharp\b", r"\b\.net\b", r"\bdotnet\b", r"\basp\.net\b", r"\bentity\s+framework\b"]),
+    ("Python", [r"\bpython\b", r"\bdjango\b", r"\bfastapi\b", r"\bflask\b"]),
+    ("Golang", [r"\bgolang\b", r"\bgo\b"]),
+    ("Rust", [r"\brust\b"]),
+    ("Ruby / Rails", [r"\bruby\b", r"\brails\b", r"\bruby\s+on\s+rails\b"]),
+    ("PHP", [r"\bphp\b", r"\blaravel\b", r"\bsymfony\b"]),
+    ("Mobile Nativo", [r"\bflutter\b", r"\bswift\b", r"\bios\b", r"\bandroid\s+nativo\b"])
+]
+
+
+def detect_missing_primary_stack(job_text: str, candidate_text: str) -> List[str]:
+    """Detects if job mandates a primary language ecosystem completely absent in candidate profile."""
+    import re
+    j_lower = f" {job_text.lower()} "
+    c_lower = f" {candidate_text.lower()} "
+    missing = []
+
+    for eco_name, patterns in PRIMARY_TECH_ECOSYSTEMS:
+        job_has_eco = any(re.search(pat, j_lower) for pat in patterns)
+        if job_has_eco:
+            cand_has_eco = any(re.search(pat, c_lower) for pat in patterns)
+            if not cand_has_eco:
+                missing.append(eco_name)
+    return missing
+
+
 class MatchingService:
     def __init__(self):
         # Cache to prevent duplicate ATS LLM matching calls for the same job and CV
@@ -144,6 +172,18 @@ class MatchingService:
         job_req_skills = [s.strip() for s in (job_analysis.required_skills or [])]
         matched_quick = [s for s in job_req_skills if any(u in s.lower() or s.lower() in u for u in user_techs)]
 
+        # Check primary language ecosystem compatibility
+        job_full_content = f"{job.title} {job.description or ''} {' '.join(job_analysis.required_skills or [])}"
+        exp_parts = []
+        for e in (user_profile.experiences or []):
+            role_str = e.role or ""
+            desc_str = e.description or ""
+            skills_str = " ".join(e.skills_used or [])
+            exp_parts.append(f"{role_str} {desc_str} {skills_str}")
+        cand_full_content = f"{' '.join(user_profile.technologies or [])} {' '.join(user_profile.databases or [])} {' '.join(user_profile.devops_tools or [])} {' '.join(exp_parts)}"
+        
+        missing_stacks = detect_missing_primary_stack(job_full_content, cand_full_content)
+
         # 6. Call LLM applying strict ATS methodology (streamlined prompt)
         candidate_seniority = user_profile.seniority_level or "Junior"
         candidate_exp_years = user_profile.years_of_experience or 0.0
@@ -157,9 +197,10 @@ class MatchingService:
             "3. Responsabilidades & Domínio (15%): Entregas e arquitetura.\n"
             "4. Localização & Modalidade (10%): Remoto/Híbrido/Presencial.\n"
             "5. Diferenciais (10%): Nice to have e diferenciais.\n\n"
-            "REGRAS DE GATING DE SENIORIDADE:\n"
+            "REGRAS DE GATING DE HARD SKILLS E SENIORIDADE:\n"
+            "- Se a vaga exigir uma linguagem/stack primária obrigatória (ex: Java, C#, Python, Golang, Ruby) que NÃO conste no perfil do candidato, DESQUALIFIQUE: pontuação máxima de 35%, fit='IGNORE', recommendation=False e declare o gap técnico nos risks.\n"
             "- Se a vaga for Sênior/Lead/Staff e o candidato for Júnior ou Pleno com menos de 4 anos de experiência, DESQUALIFIQUE: pontuação máxima de 35%, fit='IGNORE', recommendation=False e declare o gap de senioridade nos risks.\n"
-            "- Vagas compatíveis com a senioridade real do candidato (Júnior/Pleno) devem ser avaliadas normalmente.\n\n"
+            "- Vagas compatíveis com a senioridade real do candidato (Júnior/Pleno) e com stack alinhada devem ser avaliadas normalmente.\n\n"
             "Critérios de Classificação:\n"
             "- >= 80%: HIGH_MATCH (recommendation=True)\n"
             "- 60 a 79%: GOOD_MATCH (recommendation=False)\n"
@@ -201,6 +242,19 @@ Skills já pré-identificadas no candidato: {', '.join(matched_quick) if matched
                 seniority_risk = "Incompatibilidade: vaga exige nível Sênior/Especialista."
                 if seniority_risk not in match_data.risks:
                     match_data.risks.append(seniority_risk)
+
+            # Deterministic Primary Stack Guard: Enforce disqualification if required language ecosystem is absent
+            if missing_stacks:
+                if match_data.score > 35:
+                    match_data.score = 35
+                match_data.fit = "IGNORE"
+                match_data.recommendation = False
+                for s in missing_stacks:
+                    stack_risk = f"Incompatibilidade crítica de stack: Vaga exige {s}, ausente no histórico técnico do candidato."
+                    if stack_risk not in match_data.risks:
+                        match_data.risks.append(stack_risk)
+                    if s not in match_data.missing_requirements:
+                        match_data.missing_requirements.append(s)
 
             if best_resume:
                 match_data.recommended_resume_id = best_resume.id

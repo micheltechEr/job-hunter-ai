@@ -321,5 +321,66 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(res.score, 85)
             self.assertEqual(res.fit, "HIGH_MATCH")
 
+    async def test_primary_stack_barrier_guard_disqualifies_missing_language(self):
+        from app.services.matching import MatchingService
+        from app.models.db_models import UserProfile, Job, JobAnalysis, Resume
+        from app.schemas.schemas import MatchResponse
+
+        service = MatchingService()
+        service._match_cache.clear()
+
+        # Candidate with JS/Node/PHP stack
+        user = UserProfile(
+            id=1,
+            name="Angelo Dev",
+            seniority_level="Junior",
+            technologies=["React", "TypeScript", "Node.js", "PHP", "Laravel"],
+            experiences=[]
+        )
+
+        # Job explicitly requiring Java 8 / Spring Boot
+        job = Job(id=304, title="Desenvolvedor Backend Trainee", company="Confitec", description="Vaga Java 8, Spring Boot, Hibernate, SQL")
+        job_analysis = JobAnalysis(
+            id=15,
+            job_id=304,
+            extracted_role="Desenvolvedor Backend",
+            seniority="Trainee",
+            required_skills=["Java 8", "Spring Boot", "Hibernate"]
+        )
+        resume = Resume(id=1, version_name="CV Base", parsed_data={"skills": ["React", "Node.js"]})
+
+        mock_db = AsyncMock()
+
+        # Mock LLM returning an erroneously high score
+        hallucinated_match = MatchResponse(
+            score=95,
+            fit="HIGH_MATCH",
+            matched_requirements=["SQL"],
+            missing_requirements=["Java 8"],
+            strengths=["3 anos de experiência"],
+            risks=[],
+            recommendation=True,
+            explanation="Excelente fit para trainee."
+        )
+
+        with patch("app.services.llm_service.llm_service.get_structured_output", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = hallucinated_match
+
+            res = await service.match_job_profile(
+                db=mock_db,
+                job_id=304,
+                job=job,
+                job_analysis=job_analysis,
+                user_profile=user,
+                resumes=[resume]
+            )
+
+            # Deterministic Primary Stack Barrier must cap score <= 35 and set fit to IGNORE
+            self.assertLessEqual(res.score, 35)
+            self.assertEqual(res.fit, "IGNORE")
+            self.assertFalse(res.recommendation)
+            self.assertTrue(any("Java / JVM" in r for r in res.missing_requirements))
+            self.assertTrue(any("Java / JVM" in r for r in res.risks))
+
 if __name__ == "__main__":
     unittest.main()
