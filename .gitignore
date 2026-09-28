@@ -4,6 +4,8 @@
 !.env.example
 credentials.json
 token.json
+browser_profile/
+storage_state.json
 
 # SQLite databases
 *.db

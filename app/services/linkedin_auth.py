@@ -9,45 +9,42 @@ from app.config import settings
 logger = logging.getLogger("job_hunter.linkedin_auth")
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
 def get_default_linkedin_profile_dir() -> Path:
     """
-    Returns the persistent LinkedIn browser profile directory.
-    Uses .linkedin_optimizer_workspace/browser_profile in USERPROFILE by default for cross-project session sharing.
+    Returns the persistent LinkedIn browser profile directory inside the job-hunter-ai project.
     """
     if settings.LINKEDIN_BROWSER_PROFILE_DIR:
         p = Path(settings.LINKEDIN_BROWSER_PROFILE_DIR)
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-    home = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or ".")
-    shared_p = home / ".linkedin_optimizer_workspace" / "browser_profile"
-    if shared_p.exists():
-        return shared_p
-
-    local_p = Path("browser_profile")
+    local_p = PROJECT_ROOT / "browser_profile"
     local_p.mkdir(parents=True, exist_ok=True)
     return local_p
 
 
 def get_linkedin_storage_state_path() -> Optional[Path]:
     """
-    Locates an existing storage_state.json with authenticated LinkedIn session cookies.
+    Locates an existing storage_state.json with authenticated LinkedIn session cookies inside job-hunter-ai.
     """
     if settings.LINKEDIN_STORAGE_STATE_PATH:
         p = Path(settings.LINKEDIN_STORAGE_STATE_PATH)
         if p.exists() and p.is_file():
             return p
 
-    # Check shared user workspace directory
+    # 1. Check local project directory first (self-contained inside job-hunter-ai)
+    local_state = PROJECT_ROOT / "browser_profile" / "storage_state.json"
+    if local_state.exists() and local_state.is_file():
+        return local_state
+
+    # 2. Check shared user workspace directory fallback
     home = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or ".")
     shared_state = home / ".linkedin_optimizer_workspace" / "browser_profile" / "storage_state.json"
     if shared_state.exists() and shared_state.is_file():
         return shared_state
-
-    # Check local project directory
-    local_state = Path("browser_profile") / "storage_state.json"
-    if local_state.exists() and local_state.is_file():
-        return local_state
 
     return None
 
