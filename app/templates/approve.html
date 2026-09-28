@@ -18,8 +18,13 @@
             <h1 class="text-xl font-bold tracking-tight">Job Hunter AI</h1>
             <span class="bg-indigo-800 text-indigo-200 text-xs px-2 py-0.5 rounded font-mono font-medium">Metodologia ATS &ge; 80%</span>
         </div>
-        <div id="gmail-status-badge" class="text-sm bg-indigo-700 px-4 py-2 rounded-lg flex items-center gap-2">
-            <span>Checando Gmail API...</span>
+        <div class="flex items-center gap-3">
+            <div id="linkedin-status-badge" class="text-xs bg-indigo-700 px-3 py-1.5 rounded-lg flex items-center gap-2">
+                <span>LinkedIn...</span>
+            </div>
+            <div id="gmail-status-badge" class="text-xs bg-indigo-700 px-3 py-1.5 rounded-lg flex items-center gap-2">
+                <span>Checando Gmail API...</span>
+            </div>
         </div>
     </header>
 
@@ -27,6 +32,28 @@
         
         <!-- COL 1: CONTROL PANEL -->
         <div class="space-y-6">
+            <!-- LINKEDIN AUTH PANEL -->
+            <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="text-lg font-semibold flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-blue-600" fill="currentColor" viewBox="0 0 24 24"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.45a1.6 1.6 0 0 0-1.6 1.6 1.6 1.6 0 0 0 1.6 1.6 1.6 1.6 0 0 0 1.6-1.6c0-.88-.72-1.6-1.6-1.6Z"/></svg>
+                        Sessão LinkedIn
+                    </h2>
+                    <span id="linkedin-status-pill" class="text-xs px-2 py-0.5 rounded font-mono font-medium bg-gray-100 text-gray-600">Verificando...</span>
+                </div>
+                <div id="linkedin-action-box" class="space-y-2">
+                    <p id="linkedin-status-desc" class="text-xs text-gray-500">Sessão persistente ativa para raspar posts de feed e vagas privadas.</p>
+                    <div class="flex gap-2">
+                        <button id="btn-connect-linkedin" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded text-xs font-semibold transition duration-200 flex items-center justify-center gap-1">
+                            <span>Conectar LinkedIn (Login 1x)</span>
+                        </button>
+                        <button id="btn-disconnect-linkedin" class="hidden bg-gray-100 hover:bg-red-50 hover:text-red-700 text-gray-700 py-2 px-3 rounded text-xs font-medium transition duration-200">
+                            Desconectar
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- GMAIL AUTH PANEL -->
             <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
                 <h2 class="text-lg font-semibold mb-3">Conexão Gmail</h2>
@@ -385,6 +412,64 @@
         let currentActiveJobId = null;
         let currentActiveResumeId = null;
         let isEvaluatingJob = false;
+
+        // Check LinkedIn Session
+        async function checkLinkedInStatus() {
+            try {
+                const res = await fetch('/api/linkedin/status');
+                const data = await res.json();
+                const badge = document.getElementById('linkedin-status-badge');
+                const pill = document.getElementById('linkedin-status-pill');
+                const desc = document.getElementById('linkedin-status-desc');
+                const btnConnect = document.getElementById('btn-connect-linkedin');
+                const btnDisconnect = document.getElementById('btn-disconnect-linkedin');
+
+                if (data.authenticated) {
+                    badge.innerHTML = `<span class="h-2 w-2 rounded-full bg-emerald-400 inline-block"></span> <span>LinkedIn Conectado</span>`;
+                    badge.className = "text-xs bg-indigo-800 px-3 py-1.5 rounded-lg flex items-center gap-2 border border-blue-400";
+                    pill.className = "text-xs px-2 py-0.5 rounded font-mono font-semibold bg-emerald-100 text-emerald-800";
+                    pill.textContent = "CONECTADO";
+                    desc.innerHTML = `<span class="text-emerald-600 font-medium">&check; Sessão persistente ativa (${data.source || 'storage_state'}).</span>`;
+                    btnConnect.querySelector('span').textContent = "Reautenticar Sessão";
+                    btnDisconnect.classList.remove('hidden');
+                } else {
+                    badge.innerHTML = `<span class="h-2 w-2 rounded-full bg-blue-300 inline-block"></span> <span>LinkedIn Visitante</span>`;
+                    badge.className = "text-xs bg-indigo-700 px-3 py-1.5 rounded-lg flex items-center gap-2";
+                    pill.className = "text-xs px-2 py-0.5 rounded font-mono font-medium bg-gray-100 text-gray-600";
+                    pill.textContent = "MODO VISITANTE";
+                    desc.textContent = "Sessão persistente permite raspar posts de feed e vagas privadas.";
+                    btnConnect.querySelector('span').textContent = "Conectar LinkedIn (Login 1x)";
+                    btnDisconnect.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error("Erro ao verificar LinkedIn status:", err);
+            }
+        }
+
+        // Connect LinkedIn button
+        document.getElementById('btn-connect-linkedin').onclick = async () => {
+            try {
+                const res = await fetch('/api/linkedin/connect', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message || "Janela do navegador aberta. Faça o login e confirme.");
+                setTimeout(checkLinkedInStatus, 5000);
+            } catch (err) {
+                alert("Erro ao iniciar login interativo do LinkedIn.");
+            }
+        };
+
+        // Disconnect LinkedIn button
+        document.getElementById('btn-disconnect-linkedin').onclick = async () => {
+            if (!confirm("Deseja realmente desconectar a sessão do LinkedIn?")) return;
+            try {
+                const res = await fetch('/api/linkedin/disconnect', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message);
+                checkLinkedInStatus();
+            } catch (err) {
+                alert("Erro ao desconectar LinkedIn.");
+            }
+        };
 
         // Check Gmail auth
         async function checkGmailStatus() {
@@ -1360,6 +1445,7 @@
 
         // Init loads
         window.onload = () => {
+            checkLinkedInStatus();
             checkGmailStatus();
             fetchResumes();
             loadProfileRoles();

@@ -17,6 +17,7 @@ from app.api.jobs import router as jobs_router
 from app.api.resumes import router as resumes_router
 from app.api.applications import router as applications_router
 from app.api.gmail import router as gmail_router
+from app.api.linkedin import router as linkedin_router
 from app.services.scheduler import start_scheduler, shutdown_scheduler
 from app.services.ats_queue import ats_worker_queue
 from app.services.rate_limiter import APIRateLimitMiddleware
@@ -68,6 +69,7 @@ app.include_router(jobs_router, prefix="/api/jobs", tags=["Jobs"])
 app.include_router(resumes_router, prefix="/api/resumes", tags=["Resumes"])
 app.include_router(applications_router, prefix="/api/applications", tags=["Applications"])
 app.include_router(gmail_router, prefix="/api/gmail", tags=["Gmail OAuth"])
+app.include_router(linkedin_router, prefix="/api/linkedin", tags=["LinkedIn Auth"])
 
 @app.get("/", response_class=HTMLResponse)
 async def read_dashboard(request: Request):
