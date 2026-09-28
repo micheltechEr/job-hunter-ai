@@ -173,11 +173,15 @@
 
                 <!-- Plataformas -->
                 <div>
-                    <label class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Portais Alvo (6 Fontes)</label>
-                    <div class="grid grid-cols-3 gap-1.5">
+                    <label class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Portais Alvo (7 Fontes)</label>
+                    <div class="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
                         <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
                             <input type="checkbox" id="scrape-plat-linkedin" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
-                            <span class="text-[11px] text-gray-700 font-medium">LinkedIn</span>
+                            <span class="text-[11px] text-gray-700 font-medium">LinkedIn Vagas</span>
+                        </label>
+                        <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
+                            <input type="checkbox" id="scrape-plat-linkedin-posts" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                            <span class="text-[11px] text-gray-700 font-medium">LinkedIn Posts</span>
                         </label>
                         <label class="flex items-center gap-1 bg-gray-50 hover:bg-indigo-50/40 border border-gray-200 rounded px-2 py-1.5 cursor-pointer text-xs transition">
                             <input type="checkbox" id="scrape-plat-gupy" checked class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
@@ -570,6 +574,7 @@
 
             const platforms = [];
             if (document.getElementById('scrape-plat-linkedin')?.checked) platforms.push('linkedin');
+            if (document.getElementById('scrape-plat-linkedin-posts')?.checked) platforms.push('linkedin_posts');
             if (document.getElementById('scrape-plat-gupy')?.checked) platforms.push('gupy');
             if (document.getElementById('scrape-plat-programathor')?.checked) platforms.push('programathor');
             if (document.getElementById('scrape-plat-indeed')?.checked) platforms.push('indeed');

@@ -21,6 +21,7 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
 
     async def test_run_job_hunting_scrape_with_custom_roles(self):
         with patch("app.services.scraper_service.scraper_service.scrape_linkedin_jobs", new_callable=AsyncMock) as mock_li, \
+             patch("app.services.scraper_service.scraper_service.scrape_linkedin_posts", new_callable=AsyncMock) as mock_li_posts, \
              patch("app.services.scraper_service.scraper_service.scrape_gupy_jobs", new_callable=AsyncMock) as mock_gp, \
              patch("app.services.scraper_service.scraper_service.scrape_programathor_jobs", new_callable=AsyncMock) as mock_pt, \
              patch("app.services.scraper_service.scraper_service.scrape_indeed_jobs", new_callable=AsyncMock) as mock_indeed, \
@@ -36,6 +37,7 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
             mock_session_local.return_value.__aenter__.return_value = mock_session
 
             mock_li.return_value = [{"title": "Python Dev", "company": "Tech Corp", "url": "https://li.com/1", "description": "Python dev"}]
+            mock_li_posts.return_value = [{"title": "Python Post", "company": "Recruiter", "url": "https://li.com/post/1", "description": "Vaga aberta", "recipient_email": "rh@empresa.com"}]
             mock_gp.return_value = []
             mock_pt.return_value = []
             mock_indeed.return_value = [{"title": "Python Dev Indeed", "company": "Indeed Corp", "url": "https://indeed.com/1", "description": "Python dev"}]
@@ -45,21 +47,22 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
             result = await run_job_hunting_scrape(
                 roles=["Desenvolvedor Python"],
                 location="Remoto",
-                platforms=["linkedin", "indeed"],
+                platforms=["linkedin", "linkedin_posts", "indeed"],
                 limit_per_platform=2,
                 save_to_profile=False
             )
 
             self.assertEqual(result["roles"], ["Desenvolvedor Python"])
             self.assertEqual(result["location"], "Remoto")
-            self.assertEqual(result["platforms"], ["linkedin", "indeed"])
+            self.assertEqual(result["platforms"], ["linkedin", "linkedin_posts", "indeed"])
             self.assertEqual(mock_li.call_count, 1)
+            self.assertEqual(mock_li_posts.call_count, 1)
             self.assertEqual(mock_indeed.call_count, 1)
             self.assertEqual(mock_gp.call_count, 0)
             self.assertEqual(mock_pt.call_count, 0)
             self.assertEqual(mock_infojobs.call_count, 0)
             self.assertEqual(mock_tb.call_count, 0)
-            self.assertEqual(mock_ingest.call_count, 2)
+            self.assertEqual(mock_ingest.call_count, 3)
 
     async def test_update_profile_roles_schema(self):
         req = UpdateProfileRolesRequest(

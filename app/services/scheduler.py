@@ -57,13 +57,13 @@ async def run_job_hunting_scrape(
             )
             
             # Determine platforms
-            valid_platforms = {"linkedin", "programathor", "gupy", "indeed", "infojobs", "trabalhabrasil"}
+            valid_platforms = {"linkedin", "linkedin_posts", "programathor", "gupy", "indeed", "infojobs", "trabalhabrasil"}
             if platforms:
                 chosen_platforms = [p.strip().lower() for p in platforms if p and p.strip().lower() in valid_platforms]
             else:
-                chosen_platforms = ["linkedin", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"]
+                chosen_platforms = ["linkedin", "linkedin_posts", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"]
             if not chosen_platforms:
-                chosen_platforms = ["linkedin", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"]
+                chosen_platforms = ["linkedin", "linkedin_posts", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"]
             
             # Persist roles to profile if requested
             if save_to_profile and target_roles:
@@ -97,7 +97,7 @@ async def run_job_hunting_scrape(
             for role in target_roles:
                 logger.info(f"Scraping active jobs for target role: '{role}' (exclude_senior={should_exclude_senior})")
                 
-                # LinkedIn
+                # LinkedIn Jobs
                 if "linkedin" in chosen_platforms:
                     try:
                         li_list = await scraper_service.scrape_linkedin_jobs(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
@@ -106,6 +106,16 @@ async def run_job_hunting_scrape(
                             total_ingested += len(li_list)
                     except Exception as li_err:
                         logger.error(f"Error scraping LinkedIn for '{role}': {li_err}")
+
+                # LinkedIn Posts / Feed
+                if "linkedin_posts" in chosen_platforms:
+                    try:
+                        li_posts = await scraper_service.scrape_linkedin_posts(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        if li_posts:
+                            await scraper_service.ingest_new_jobs(db, li_posts, exclude_senior=should_exclude_senior)
+                            total_ingested += len(li_posts)
+                    except Exception as post_err:
+                        logger.error(f"Error scraping LinkedIn Posts for '{role}': {post_err}")
                 
                 # Programathor
                 if "programathor" in chosen_platforms:
