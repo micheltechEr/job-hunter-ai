@@ -891,16 +891,16 @@
 
             container.innerHTML = displayedJobs.map(j => {
                 const app = cachedAppsMap[j.id] || j.application;
-                let scoreBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200">ATS Não calculado</span>';
+                let scoreBadge = '<span class="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-indigo-700 border border-indigo-200">⚡ Clique para calcular ATS</span>';
                 let statusLabel = 'DISCOVERED';
                 let statusClass = 'bg-gray-100 text-gray-600 border border-gray-200';
-                let actionText = '⚡ Calcular ATS / Proposta';
+                let actionText = '⚡ Calcular ATS sob demanda';
                 let isHigh = false;
                 
                 if (app) {
                     statusLabel = app.status || 'DISCOVERED';
                     if (app.status === 'ANALYZING') {
-                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 animate-pulse border border-amber-300">⏳ Analisando ATS...</span>`;
+                        scoreBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 animate-pulse border border-amber-300">⏳ Calculando ATS...</span>`;
                         statusClass = 'bg-amber-50 text-amber-700 border-amber-200 border';
                         actionText = '⏳ Calculando...';
                     } else if (app.score !== null && app.score !== undefined) {
@@ -960,17 +960,6 @@
                 });
 
                 renderFilteredJobs();
-
-                // Auto-poll if any job is currently being analyzed
-                if (autoPollTimeout) clearTimeout(autoPollTimeout);
-                const hasPending = cachedJobsList.some(j => {
-                    const app = cachedAppsMap[j.id] || j.application;
-                    return app && app.status === 'ANALYZING';
-                });
-
-                if (hasPending) {
-                    autoPollTimeout = setTimeout(fetchJobs, 3000);
-                }
             } catch (err) {
                 console.error("Erro ao listar vagas:", err);
             }

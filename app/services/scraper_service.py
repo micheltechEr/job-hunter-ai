@@ -182,9 +182,10 @@ class ScraperService:
     async def _scrape_linkedin_impl(self, keyword: str, location: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
         kw_encoded = urllib.parse.quote(keyword)
-        loc_encoded = urllib.parse.quote(location)
-        url = f"https://www.linkedin.com/jobs/search?keywords={kw_encoded}&location={loc_encoded}&f_TPR=r604800&position=1&pageNum=0"
-        logger.info(f"Scraping LinkedIn: {url} (exclude_senior={exclude_senior})")
+        loc_clean = location.strip() if location and location.strip() else "Brasil"
+        loc_encoded = urllib.parse.quote(loc_clean)
+        url = f"https://br.linkedin.com/jobs/search?keywords={kw_encoded}&location={loc_encoded}&geoId=106057199&f_TPR=r604800&position=1&pageNum=0"
+        logger.info(f"Scraping LinkedIn Brasil: {url} (exclude_senior={exclude_senior})")
 
         from app.services.linkedin_auth import get_linkedin_storage_state_path
         state_file = get_linkedin_storage_state_path()
@@ -192,7 +193,9 @@ class ScraperService:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
             context_kwargs: Dict[str, Any] = {
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "locale": "pt-BR",
+                "extra_http_headers": {"Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"}
             }
             if state_file:
                 logger.info(f"Using authenticated LinkedIn persistent session: {state_file}")
@@ -234,6 +237,15 @@ class ScraperService:
                     job_title = title_el.get_text().strip()
                     if exclude_senior and is_senior_title(job_title):
                         logger.info(f"Skipping Senior LinkedIn job: '{job_title}'")
+                        continue
+
+                    loc_text = loc_el.get_text(strip=True) if loc_el else "Brasil"
+                    
+                    # Filter out international/foreign locations
+                    FOREIGN_LOCATIONS = {"united states", "usa", "uk", "united kingdom", "india", "germany", "deutschland", "canada", "poland", "argentina", "colombia", "mexico", "chile", "france", "australia", "spain", "london", "bangalore", "berlin"}
+                    loc_lower = loc_text.lower()
+                    if any(f in loc_lower for f in FOREIGN_LOCATIONS) and not ("brasil" in loc_lower or "brazil" in loc_lower):
+                        logger.info(f"Skipping foreign LinkedIn job location: '{loc_text}' for '{job_title}'")
                         continue
 
                     company = company_el.get_text().strip()
