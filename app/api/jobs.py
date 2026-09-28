@@ -383,7 +383,11 @@ async def trigger_jobs_scraping(
         else:
             target_roles = ["Desenvolvedor Python", "Engenheiro de Software"]
 
-    target_location = (payload.location.strip() if (payload and payload.location and payload.location.strip()) else "Brasil")
+    raw_loc = (payload.location.strip() if (payload and payload.location and payload.location.strip()) else (prof.location if prof and prof.location else "Brasil"))
+    if raw_loc.lower() in ["não informado", "nao informado", "n/a", "none", "unknown", ""]:
+        target_location = "Brasil"
+    else:
+        target_location = raw_loc
     target_platforms = (payload.platforms if (payload and payload.platforms) else ["linkedin", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil"])
     target_limit = (payload.limit_per_platform if (payload and payload.limit_per_platform) else 5)
     save_to_profile = (payload.save_to_profile if payload else False)

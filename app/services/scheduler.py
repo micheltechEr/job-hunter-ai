@@ -41,8 +41,12 @@ async def run_job_hunting_scrape(
                 target_roles = ["Desenvolvedor Python", "Engenheiro de Software"]
                 logger.info(f"No specific roles provided or in profile. Using fallback: {target_roles}")
             
-            # Determine location
-            target_location = location.strip() if location and location.strip() else (profile.location if profile and profile.location else "Brasil")
+            # Determine location with normalization
+            raw_loc = location.strip() if location and location.strip() else (profile.location if profile and profile.location else "Brasil")
+            if raw_loc.lower() in ["não informado", "nao informado", "n/a", "none", "unknown", ""]:
+                target_location = "Brasil"
+            else:
+                target_location = raw_loc
             
             # Determine candidate seniority and senior exclusion rule
             profile_sen = profile.seniority_level if profile else "Junior"

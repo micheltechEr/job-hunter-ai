@@ -3,28 +3,64 @@ import sys
 import logging
 import urllib.parse
 from typing import List, Dict, Callable, Any, Optional
+import re
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from app.config import settings
 from app.models.db_models import Job, Application
 from app.schemas.schemas import JobCreate
-
-import re
 
 logger = logging.getLogger("job_hunter.scraper_service")
 
 
+NON_TECH_PATTERNS = [
+    # General labor / services / maintenance
+    r"\bauxiliar\b", r"\bassendente\b", r"\batendente\b", r"\brecepcionista\b", r"\bsecret[aá]ri[ao]\b",
+    r"\bt[eé]cnico\s+em\b", r"\bt[eé]cnico\s+de\b", r"\bt[eé]cnico\s+ambiental\b", r"\bt[eé]cnico\b",
+    r"\beletricista\b", r"\bmec[aâ]nico\b", r"\bmotorista\b", r"\bporteiro\b", r"\bvigilante\b",
+    r"\bseguran[cç]a\b", r"\blimpeza\b", r"\bservi[cç]os\s+gerais\b", r"\bcopeir[ao]\b", r"\bcozinheir[ao]\b",
+    r"\bgar[cç][oõ]m\b", r"\bgar[cç]onete\b", r"\bpintor\b", r"\bmanuten[cç][aã]o\b", r"\bestoquista\b", r"\balmoxarife\b",
+    r"\boperador\b", r"\btelefonista\b", r"\bcaixa\b", r"\bbalconista\b", r"\bconferente\b",
+    # Commercial / Sales / Marketing non-tech
+    r"\bvendedor\b", r"\bvendas\b", r"\bcomercial\b", r"\bcorretor\b", r"\btelemarketing\b", r"\bsdr\b", r"\bbdr\b",
+    # Education / Academic
+    r"\bprofessor\b", r"\bprofessora\b", r"\bbiologia\b", r"\bqu[ií]mica\b", r"\bf[ií]sica\b", r"\bmatem[aá]tica\b",
+    r"\bpedagog[ao]\b", r"\bdocente\b", r"\beduca[cç][aã]o\s+f[ií]sica\b", r"\bgeografia\b", r"\bhist[oó]ria\b",
+    # Legal / Admin / Finance / HR non-tech
+    r"\blicita[cç][oõ]es\b", r"\blicita[cç][aã]o\b", r"\badvogad[oa]\b", r"\bjur[ií]dic[oa]\b", r"\bcont[aá]bil\b",
+    r"\bcontador\b", r"\bfiscal\b", r"\bfinanceir[oa]\b", r"\brh\b", r"\brecursos\s+humanos\b", r"\bdp\b",
+    r"\bdepartamento\s+pessoal\b", r"\bcomprador\b", r"\blog[ií]stica\b", r"\bcompras\b",
+    # Healthcare
+    r"\benfermeir[oa]\b", r"\benfermagem\b", r"\bm[eé]dic[oa]\b", r"\bdentista\b", r"\bpsic[oó]log[oa]\b",
+    r"\bnutricionista\b", r"\bfarmac[eê]utic[oa]\b", r"\bfisioterapeuta\b"
+]
+
+CORE_TECH_KEYWORDS = [
+    "desenvolvedor", "desenvolvedora", "developer", "dev", "programador", "programadora",
+    "software", "frontend", "front-end", "backend", "back-end", "fullstack", "full-stack", "full stack",
+    "engenheiro de software", "engenheira de software", "software engineer",
+    "python", "javascript", "typescript", "react", "node", "nodejs", "node.js", "java", "golang", "go",
+    "c#", ".net", "dotnet", "php", "laravel", "ruby", "rails", "rust", "c++", "kotlin", "swift", "flutter",
+    "engenheiro de dados", "engenharia de dados", "data engineer", "analista de dados", "data analyst",
+    "analista de bi", "business intelligence", "power bi", "machine learning", "ia", "ai engineer",
+    "devops", "cloud engineer", "cloud", "qa", "quality assurance", "tester", "sre"
+]
+
+
 def clean_job_title(title: str) -> str:
-    """Removes platform noise tags like 'Em Alta', 'Vaga de', 'Nova', etc."""
+    """Removes platform noise tags like 'Em Alta', 'Vaga de', 'Nova', ID tokens, etc."""
     if not title:
         return ""
-    # Strip prefixes like 'Vaga de', 'Vaga para', 'Vaga '
-    t = re.sub(r'^(?:vaga\s+de\s+|vaga\s+para\s+|vaga\s+)', '', title, flags=re.IGNORECASE).strip()
-    # Strip suffixes like 'Em Alta', 'Em Destaque', 'Nova', 'Urgente'
-    t = re.sub(r'(?:Em\s+Alta|Em\s+Destaque|Nova|Urgente|Exclusiva)$', '', t, flags=re.IGNORECASE).strip()
-    # Strip leading/trailing punctuation and collapse multiple spaces
+    # Strip prefix boilerplate
+    t = re.sub(r'^(?:vaga\s+de\s+|vaga\s+para\s+|vaga\s+|\d+\s+vagas\s+de\s+)', '', title, flags=re.IGNORECASE).strip()
+    # Strip suffix tags
+    t = re.sub(r'(?:Em\s+Alta|Em\s+Destaque|Nova|Urgente|Exclusiva|Copiar ID.*)$', '', t, flags=re.IGNORECASE).strip()
+    # Strip trailing boilerplate ID codes
+    t = re.sub(r'\d{6,}.*$', '', t).strip()
+    # Collapse multiple spaces and trim
     t = re.sub(r'\s+', ' ', t).strip(' -–—|:')
     return t
 
@@ -32,76 +68,35 @@ def clean_job_title(title: str) -> str:
 def is_unrelated_non_tech_title(title: str) -> bool:
     """Checks if a job title belongs to non-tech, operational, or administrative fields."""
     if not title:
-        return False
+        return True
     t = f" {title.lower()} "
-    non_tech_patterns = [
-        r"\bauxiliar\s+administrativ[oa]\b",
-        r"\bassendente\b",
-        r"\batendente\b",
-        r"\brecepcionista\b",
-        r"\bsecret[aá]ri[ao]\b",
-        r"\bt[eé]cnico\s+em\s+eletr[oô]nica\b",
-        r"\bt[eé]cnico\s+em\s+refrigera[cç][aã]o\b",
-        r"\bt[eé]cnico\s+mec[aâ]nico\b",
-        r"\bt[eé]cnico\s+de\s+manuten[cç][aã]o\b",
-        r"\bt[eé]cnico\s+em\s+enfermagem\b",
-        r"\bt[eé]cnico\s+de\s+seguran[cç]a\b",
-        r"\bmec[aâ]nico\s+de\s+refrigera[cç][aã]o\b",
-        r"\beletricista\b",
-        r"\bmec[aâ]nico\b",
-        r"\bmotorista\b",
-        r"\bporteiro\b",
-        r"\bvigilante\b",
-        r"\bseguran[cç]a\b",
-        r"\bauxiliar\s+de\s+limpeza\b",
-        r"\bauxiliar\s+de\s+servi[cç]os\s+gerais\b",
-        r"\bservi[cç]os\s+gerais\b",
-        r"\bcopeir[ao]\b",
-        r"\bcozinheir[ao]\b",
-        r"\boperador\s+de\s+caixa\b",
-        r"\bbalconista\b",
-        r"\bvendedor[a]?\b",
-        r"\bpromotor[a]?\s+de\s+vendas\b",
-        r"\bestoquista\b",
-        r"\balmoxarife\b",
-        r"\bconferente\b",
-        r"\bauxiliar\s+de\s+produ[cç][aã]o\b",
-        r"\bgar[cç]om\b",
-        r"\bgar[cç]onete\b",
-        r"\bfarmac[eê]utic[ao]\b"
-    ]
-    for pattern in non_tech_patterns:
-        if re.search(pattern, t, re.IGNORECASE):
-            return True
-    return False
+    return any(re.search(pat, t, re.IGNORECASE) for pat in NON_TECH_PATTERNS)
 
 
-def is_role_relevant(title: str, target_keyword: str) -> bool:
-    """Checks if a job title is relevant to tech/software roles or target search keyword."""
-    if not title:
-        return False
-    if is_unrelated_non_tech_title(title):
+def is_role_relevant(title: str, target_keyword: str = "") -> bool:
+    """Strictly validates if a title belongs to authentic software, developer, data or tech roles."""
+    if not title or len(title.strip()) < 3:
         return False
 
     t_clean = clean_job_title(title).lower()
-    kw_clean = (target_keyword or "").lower().strip()
 
-    # Core tech tokens indicating a tech/developer/data role
-    tech_tokens = [
-        "desenvolvedor", "developer", "dev", "programador", "software",
-        "engenheiro", "engineer", "frontend", "front-end", "backend", "back-end",
-        "fullstack", "full-stack", "full stack", "python", "javascript", "typescript",
-        "react", "node", "java", "golang", "c#", ".net", "php", "ruby", "rust",
-        "dados", "data", "analista", "bi", "sql", "ia", "ai", "machine learning",
-        "nlp", "cloud", "aws", "azure", "gcp", "devops", "qa", "tester", "computação",
-        "tecnologia", "ti", "it", "web", "mobile", "android", "ios", "flutter"
-    ]
+    # 1. Block platform noise artifacts (e.g. 'Copiar ID da vaga', 'NS - Vagas Leo Madeiras', short noise)
+    if "copiar id" in t_clean or re.match(r"^[a-z0-9\s\-_/|]{1,6}$", t_clean.strip()):
+        return False
 
-    kw_tokens = [w for w in re.split(r'[\s,;/]+', kw_clean) if len(w) > 2 and w not in ("vaga", "para", "com", "vagas", "junior", "pleno", "senior")]
-    has_kw_match = any(token in t_clean for token in kw_tokens) if kw_tokens else True
-    has_tech_token = any(token in t_clean for token in tech_tokens)
+    # 2. Block non-tech patterns
+    if is_unrelated_non_tech_title(title):
+        return False
 
-    return has_kw_match or has_tech_token
+    # 3. Must contain at least one authentic core tech keyword
+    has_tech_kw = any(re.search(r'\b' + re.escape(tk) + r'\b', t_clean) for tk in CORE_TECH_KEYWORDS)
+    if not has_tech_kw:
+        has_tech_kw = any(tk in t_clean for tk in [
+            "full stack", "full-stack", "front-end", "back-end",
+            "desenvolvedor", "developer", "programador", "software", "sistemas"
+        ])
+
+    return bool(has_tech_kw)
 
 
 def is_senior_title(title: str) -> bool:
