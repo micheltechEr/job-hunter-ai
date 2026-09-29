@@ -369,57 +369,111 @@ class ScraperService:
 
                             html = await page.content()
                             soup = BeautifulSoup(html, "html.parser")
-                            
-                            cards = soup.select(".feed-shared-update-v2, li.reusable-search__result-container, [data-urn*='activity'], .feed-shared-update-v2__content, div[data-id*='urn:li:activity']")
-                            if not cards:
-                                cards = soup.select("[class*='feed-shared-update'], [class*='update-components-actor']")
 
-                            for card in cards:
+                            # Parse post items using both Modern and Legacy LinkedIn selectors
+                            cards_data = []
+
+                            # 1. Modern DOM: Search for individual feed item markers
+                            feed_markers = soup.find_all(lambda el: el.name in ('span', 'h2', 'div', 'p') and el.string and any(m_txt in el.string for m_txt in ['Publicação no feed', 'Feed post', 'Publicação']))
+                            for m in feed_markers:
+                                card_div = None
+                                curr = m.parent
+                                while curr and curr.name != 'main' and curr.name != 'body':
+                                    contained = curr.find_all(lambda el: el.name in ('span', 'h2', 'div', 'p') and el.string and any(m_txt in el.string for m_txt in ['Publicação no feed', 'Feed post', 'Publicação']))
+                                    if len(contained) == 1:
+                                        card_div = curr
+                                    elif len(contained) > 1:
+                                        break
+                                    curr = curr.parent
+                                if card_div and card_div not in cards_data:
+                                    cards_data.append(card_div)
+
+                            # 2. Legacy DOM fallback
+                            if not cards_data:
+                                legacy_cards = soup.select(".feed-shared-update-v2, li.reusable-search__result-container, [data-urn*='activity'], .feed-shared-update-v2__content, div[data-id*='urn:li:activity']")
+                                if not legacy_cards:
+                                    legacy_cards = soup.select("[class*='feed-shared-update'], [class*='update-components-actor']")
+                                cards_data = legacy_cards
+
+                            logger.info(f"LinkedIn posts parser detected {len(cards_data)} card elements for query '{q_text}' [{stage}]")
+
+                            for card in cards_data:
                                 if len(jobs_scraped) >= limit:
                                     break
 
-                                actor_el = card.select_one(".update-components-actor__name, .feed-shared-actor__name, [class*='actor__name']")
-                                title_el = card.select_one(".update-components-actor__description, .feed-shared-actor__description, [class*='actor__description']")
-                                text_el = card.select_one(".update-components-text, .feed-shared-update-v2__description, [class*='feed-shared-inline-show-more-text'], .break-words")
-                                link_el = card.select_one("a[href*='activity'], a[href*='/posts/'], a[href*='urn:li:activity'], a.app-aware-link")
-
-                                post_text = text_el.get_text(separator="\n", strip=True) if text_el else ""
-                                if not post_text or len(post_text) < 30:
+                                full_card_text = card.get_text(separator="\n", strip=True) if card else ""
+                                if not full_card_text or len(full_card_text) < 40:
                                     continue
 
-                                author = actor_el.get_text(strip=True) if actor_el else "Recrutador LinkedIn"
-                                headline = title_el.get_text(strip=True) if title_el else "Tech Recruiter / RH"
-                                
-                                if link_el and "href" in link_el.attrs:
-                                    post_url = link_el["href"].split("?")[0]
-                                    if not post_url.startswith("http"):
-                                        post_url = "https://www.linkedin.com" + post_url
-                                else:
-                                    post_urn = card.get("data-urn") or card.get("data-id") or ""
-                                    if "activity:" in post_urn:
-                                        act_id = post_urn.split("activity:")[-1].split("]")[0].split('"')[0]
-                                        post_url = f"https://www.linkedin.com/feed/update/urn:li:activity:{act_id}/"
+                                # 1. Skip candidate seeking posts (#OpenToWork, buscando emprego)
+                                card_lower = full_card_text.lower()
+                                if any(phrase in card_lower for phrase in ["#opentowork", "buscando oportunidade", "em busca de oportunidade", "em busca da minha primeira oportunidade", "buscando recolocação", "buscando emprego", "estou à procura"]):
+                                    continue
+
+                                # 2. Clean noise lines
+                                raw_lines = [line.strip() for line in full_card_text.split("\n") if line.strip()]
+                                clean_lines = []
+                                for l in raw_lines:
+                                    if any(skip in l.lower() for skip in ['publicação no feed', 'feed post', '• 1º', '• 2º', '• 3º', 'seguir', 'acesse meu site', 'conectar', 'gostei', 'comentar', 'compartilhar', 'enviar', 'visualizações', 'denunciar']):
+                                        continue
+                                    clean_lines.append(l)
+
+                                clean_body = "\n".join(clean_lines)
+                                if len(clean_body) < 30:
+                                    continue
+
+                                # 3. Extract author name
+                                author = clean_lines[0] if clean_lines else "Recrutador LinkedIn"
+                                author_link = card.find("a", href=lambda h: h and "/in/" in h)
+                                if author_link:
+                                    author_text = author_link.get_text(strip=True).split("•")[0].strip()
+                                    if author_text and len(author_text) > 2:
+                                        author = author_text
+
+                                # 4. Extract external or post link
+                                post_url = (author_link.get("href") if author_link else url) or url
+                                ext_links = card.find_all("a", href=lambda h: h and ("/safety/go/" in h or "lnkd.in" in h or "/jobs/view/" in h or ("http" in h and "/in/" not in h and "linkedin.com/feed" not in h and "origin=HASH_TAG" not in h)))
+                                if ext_links:
+                                    raw_link = ext_links[-1].get("href", "")
+                                    if "/safety/go/?url=" in raw_link:
+                                        match_url = re.search(r"[?&]url=([^&]+)", raw_link)
+                                        if match_url:
+                                            post_url = urllib.parse.unquote(match_url.group(1))
                                     else:
-                                        post_url = f"https://www.linkedin.com/search/results/content/?keywords={kw_encoded}"
+                                        post_url = raw_link
 
                                 if post_url in seen_urls:
                                     continue
                                 seen_urls.add(post_url)
 
-                                email_match = re.search(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", post_text)
+                                # 5. Email extraction
+                                email_match = re.search(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", clean_body)
                                 extracted_email = email_match.group(1) if email_match else None
 
-                                first_line = post_text.split("\n")[0][:100]
-                                inferred_title = clean_job_title(first_line)
+                                # 6. Job title extraction from body lines
+                                body_lines = clean_lines[2:] if len(clean_lines) > 2 else clean_lines
+                                title_candidate = ""
+                                for b_idx, b_line in enumerate(body_lines):
+                                    if any(w in b_line.lower() for w in ['desenvolvedor', 'developer', 'analista', 'engineer', 'full stack', 'frontend', 'backend', 'vaga', 'oportunidade', 'contrat']):
+                                        if not any(skip in b_line.lower() for skip in ['link', 'http', 'não tenho ligação', 'contato', 'há ']):
+                                            if len(clean_job_title(b_line)) < 6 and b_idx + 1 < len(body_lines):
+                                                title_candidate = f"{b_line} {body_lines[b_idx+1]}"
+                                            else:
+                                                title_candidate = b_line
+                                            break
+                                if not title_candidate:
+                                    title_candidate = f"{kw_clean} (Post por {author})"
+
+                                inferred_title = clean_job_title(title_candidate)
                                 if not is_role_relevant(inferred_title, kw_clean):
                                     inferred_title = f"{kw_clean} (Post por {author})"
 
-                                if exclude_senior and (is_senior_title(inferred_title) or is_senior_title(first_line)):
+                                if exclude_senior and (is_senior_title(inferred_title) or is_senior_title(title_candidate)):
                                     logger.info(f"Skipping Senior LinkedIn post: '{inferred_title}'")
                                     continue
 
-                                work_mode = "Remote" if ("remoto" in post_text.lower() or "remote" in post_text.lower() or "home office" in post_text.lower()) else ("Hybrid" if ("hibrid" in post_text.lower() or "híbrid" in post_text.lower()) else "On-site")
-                                desc = f"Publicação recente ({stage}) por {author} ({headline}):\n\n{post_text}"
+                                work_mode = "Remote" if ("remoto" in clean_body.lower() or "remote" in clean_body.lower() or "home office" in clean_body.lower()) else ("Hybrid" if ("hibrid" in clean_body.lower() or "híbrid" in clean_body.lower()) else "On-site")
+                                desc = f"Publicação recente ({stage}) no LinkedIn por {author}:\n\n{clean_body}"
 
                                 jobs_scraped.append({
                                     "title": inferred_title,

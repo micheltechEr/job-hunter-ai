@@ -279,8 +279,10 @@ class TestCandidateSearchProfileAndLinkedInPipeline(unittest.TestCase):
                 }
             ]
 
-            with patch("app.services.scraper_service.scraper_service.scrape_linkedin_jobs", new_callable=AsyncMock) as mock_scrape:
+            with patch("app.services.scraper_service.scraper_service.scrape_linkedin_jobs", new_callable=AsyncMock) as mock_scrape, \
+                 patch("app.services.scraper_service.scraper_service.scrape_linkedin_posts", new_callable=AsyncMock) as mock_scrape_posts:
                 mock_scrape.return_value = mock_scraped_jobs
+                mock_scrape_posts.return_value = []
 
                 results = await provider.search_and_match_pipeline(
                     candidate_profile=profile,
