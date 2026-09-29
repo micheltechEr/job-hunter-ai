@@ -301,6 +301,7 @@ class ScraperService:
         
         # Build search queries prioritizing hiring keywords
         queries_to_try = [
+            f'vaga {kw_clean}',
             f'"{kw_clean}" (contratando OR vaga OR "estamos contratando" OR "envie seu cv" OR "mande seu cv")',
             f'{kw_clean} (contratando OR oportunidade OR "vaga aberta" OR "compartilhem")'
         ]
@@ -343,7 +344,7 @@ class ScraperService:
                             break
 
                         kw_encoded = urllib.parse.quote(q_text)
-                        url = f"https://www.linkedin.com/search/results/content/?keywords={kw_encoded}&datePosted=%22{stage}%22&sortBy=%22date_posted%22"
+                        url = f"https://www.linkedin.com/search/results/content/?keywords={kw_encoded}&origin=SWITCH_SEARCH_VERTICAL&datePosted=%22{stage}%22&sortBy=%22date_posted%22"
                         logger.info(f"Scraping LinkedIn Posts [{stage}]: {url} (exclude_senior={exclude_senior})")
 
                         try:
@@ -355,6 +356,12 @@ class ScraperService:
                                 logger.warning("LinkedIn post search requires active session. Connect LinkedIn via Dashboard.")
                                 return jobs_scraped
 
+                            # Expand "ver mais" on posts
+                            try:
+                                await page.evaluate("() => { document.querySelectorAll('button.feed-shared-inline-show-more-text__see-more-less-toggle, button.see-more').forEach(b => b.click()); }")
+                            except Exception:
+                                pass
+
                             # Scroll to load feed items
                             for _ in range(2):
                                 await page.mouse.wheel(0, 1000)
@@ -363,7 +370,7 @@ class ScraperService:
                             html = await page.content()
                             soup = BeautifulSoup(html, "html.parser")
                             
-                            cards = soup.select(".feed-shared-update-v2, [data-urn*='activity'], .feed-shared-update-v2__content, div[data-id*='urn:li:activity']")
+                            cards = soup.select(".feed-shared-update-v2, li.reusable-search__result-container, [data-urn*='activity'], .feed-shared-update-v2__content, div[data-id*='urn:li:activity']")
                             if not cards:
                                 cards = soup.select("[class*='feed-shared-update'], [class*='update-components-actor']")
 

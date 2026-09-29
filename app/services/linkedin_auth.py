@@ -48,16 +48,10 @@ def get_linkedin_storage_state_path() -> Optional[Path]:
         if is_valid_storage_state(p):
             return p
 
-    # 1. Check local project directory first (self-contained inside job-hunter-ai)
+    # Local project directory (self-contained inside job-hunter-ai)
     local_state = PROJECT_ROOT / "browser_profile" / "storage_state.json"
     if is_valid_storage_state(local_state):
         return local_state
-
-    # 2. Check shared user workspace directory fallback
-    home = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or ".")
-    shared_state = home / ".linkedin_optimizer_workspace" / "browser_profile" / "storage_state.json"
-    if is_valid_storage_state(shared_state):
-        return shared_state
 
     return None
 
