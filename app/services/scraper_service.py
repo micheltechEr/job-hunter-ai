@@ -157,6 +157,86 @@ def resolve_exclude_senior(seniority: Optional[str] = None, profile_seniority: O
     return True
 
 
+def is_location_matching(
+    job_location: str,
+    target_location: str = "Brasil",
+    work_mode: str = "On-site",
+    description: str = ""
+) -> bool:
+    """Strictly validates if a scraped job matches the targeted location.
+    
+    - Generic target ('Brasil'): Accepts all Brazilian locations and Remote. Discards foreign locations.
+    - Strict Remote target ('Remoto'): Accepts ONLY Remote/Home Office jobs.
+    - City/State target ('Salvador, BA', 'São Paulo', etc.):
+      - Always accepts Remote jobs (can be worked from target city).
+      - Accepts On-site/Hybrid ONLY if located in the target city/state.
+      - Discards On-site/Hybrid jobs from other cities/states (e.g. On-site in SP when searching Salvador).
+    """
+    if not target_location or not target_location.strip():
+        return True
+
+    t_norm = target_location.strip().lower()
+    j_norm = (job_location or "").strip().lower()
+    desc_norm = (description or "").lower()
+    w_norm = (work_mode or "").lower()
+
+    # 1. Generic national target
+    if t_norm in ("brasil", "brazil", "todo brasil", "nacional", "all"):
+        FOREIGN_LOCATIONS = {"united states", "usa", "uk", "united kingdom", "india", "germany", "deutschland", "canada", "poland", "argentina", "colombia", "mexico", "chile", "france", "australia", "spain", "london", "bangalore", "berlin", "lisboa", "porto, portugal"}
+        if any(f in j_norm for f in FOREIGN_LOCATIONS) and not ("brasil" in j_norm or "brazil" in j_norm or "remoto" in j_norm):
+            return False
+        return True
+
+    # 2. Strict Remote target
+    if t_norm in ("remoto", "remote", "home office", "home-office", "teletrabalho"):
+        return w_norm == "remote" or "remoto" in j_norm or "home office" in j_norm or "100% remoto" in desc_norm
+
+    # 3. Specific City / State Target (e.g. "Salvador, BA", "São Paulo", "Curitiba")
+    # Remote jobs are always valid from any location
+    if w_norm == "remote" or "remoto" in j_norm or "home office" in j_norm:
+        return True
+
+    # Tokenize target into words
+    target_tokens = [tok.strip() for tok in re.split(r"[,/\-\s]+", t_norm) if len(tok.strip()) >= 2]
+    
+    STATE_MAPPING = {
+        "ba": "bahia", "bahia": "ba",
+        "sp": "são paulo", "sao paulo": "sp",
+        "rj": "rio de janeiro", "rio": "rj",
+        "mg": "minas gerais", "minas": "mg",
+        "pr": "paraná", "parana": "pr",
+        "sc": "santa catarina",
+        "rs": "rio grande do sul",
+        "pe": "pernambuco",
+        "ce": "ceará", "ceara": "ce",
+        "df": "distrito federal", "brasília": "df", "brasilia": "df",
+        "go": "goiás", "goias": "go",
+        "es": "espírito santo", "espirito santo": "es"
+    }
+    
+    expanded_target = set(target_tokens)
+    for tok in list(target_tokens):
+        if tok in STATE_MAPPING:
+            expanded_target.add(STATE_MAPPING[tok])
+
+    # Check word boundaries for tokens in job_location
+    for tok in expanded_target:
+        if len(tok) <= 2:
+            if re.search(r'\b' + re.escape(tok) + r'\b', j_norm):
+                return True
+        else:
+            if tok in j_norm:
+                return True
+
+    # Check description for full city/state name
+    for tok in target_tokens:
+        if len(tok) > 3 and tok in desc_norm:
+            return True
+
+    logger.info(f"Filtering out On-site/Hybrid job in '{job_location}' (Target was '{target_location}')")
+    return False
+
+
 def _run_in_proactor_thread(coro_fn: Callable, *args, **kwargs) -> Any:
     """Executes Playwright coroutines in a dedicated OS thread with WindowsProactorEventLoop.
     
@@ -272,7 +352,7 @@ class ScraperService:
 
                     company = company_el.get_text().strip()
                     job_url = link_el["href"].split("?")[0]
-                    loc_text = loc_el.get_text().strip() if loc_el else "Brasil"
+                    loc_text = loc_el.get_text(strip=True) if loc_el else "Brasil"
                     desc = f"Vaga de {job_title} na empresa {company}. Localização: {loc_text}."
                     work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
                     
@@ -290,6 +370,10 @@ class ScraperService:
                             work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
                     except Exception as det_err:
                         logger.debug(f"Could not load LinkedIn detail page: {det_err}")
+
+                    # Strict location validation
+                    if not is_location_matching(loc_text, location, work_mode, desc):
+                        continue
 
                     jobs_scraped.append({
                         "title": job_title,
@@ -508,6 +592,11 @@ class ScraperService:
                                     continue
 
                                 work_mode = "Remote" if ("remoto" in clean_body.lower() or "remote" in clean_body.lower() or "home office" in clean_body.lower()) else ("Hybrid" if ("hibrid" in clean_body.lower() or "híbrid" in clean_body.lower()) else "On-site")
+                                
+                                # Strict location validation for posts
+                                if not is_location_matching("Brasil", location, work_mode, clean_body):
+                                    continue
+
                                 desc = f"Publicação recente ({stage}) no LinkedIn por {author}:\n\n{clean_body}"
 
                                 jobs_scraped.append({
@@ -515,7 +604,7 @@ class ScraperService:
                                     "company": author,
                                     "url": post_url,
                                     "description": desc,
-                                    "location": "Brasil",
+                                    "location": location if location.lower() not in ("brasil", "brazil", "todo brasil", "nacional") else "Brasil",
                                     "work_mode": work_mode,
                                     "salary": "A combinar",
                                     "recipient_email": extracted_email,
@@ -580,8 +669,12 @@ class ScraperService:
                         company = spans[0] if len(spans) > 0 else "Empresa Confidencial"
                         job_loc = spans[1] if len(spans) > 1 else loc_clean
                         work_mode = "Remote" if "remoto" in job_loc.lower() else "On-site"
-                        
                         desc = f"Vaga de {title} na empresa {company}. Localização: {job_loc}."
+
+                        # Strict location validation
+                        if not is_location_matching(job_loc, location, work_mode, desc):
+                            continue
+
                         salary = "N/A"
 
                         jobs_scraped.append({
@@ -655,13 +748,13 @@ class ScraperService:
                             work_mode = "Hybrid"
                             break
                             
-                    location = "Brasil"
+                    job_loc = "Brasil"
                     for part in text_parts:
-                        if " - " in part or "Brasil" in part or "Remoto" in part:
-                            location = part
+                        if " - " in part or "Brasil" in part or "Remoto" in part or any(c in part for c in ["/", ","]):
+                            job_loc = part
                             break
 
-                    desc = f"Vaga de {title} na empresa {company}. Modalidade: {work_mode}. Localização: {location}."
+                    desc = f"Vaga de {title} na empresa {company}. Modalidade: {work_mode}. Localização: {job_loc}."
                     
                     try:
                         detail_page = await context.new_page()
@@ -674,12 +767,16 @@ class ScraperService:
                     except Exception as det_err:
                         logger.debug(f"Could not load Gupy detail page: {det_err}")
 
+                    # Strict location validation
+                    if not is_location_matching(job_loc, location, work_mode, desc):
+                        continue
+
                     jobs_scraped.append({
                         "title": title,
                         "company": company,
                         "url": job_url,
                         "description": desc,
-                        "location": location,
+                        "location": job_loc,
                         "work_mode": work_mode,
                         "salary": "N/A"
                     })
@@ -755,6 +852,10 @@ class ScraperService:
                         snippet = snippet_el.get_text(strip=True) if snippet_el else ""
                         desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {snippet}"
                         work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+
+                        # Strict location validation
+                        if not is_location_matching(loc_text, location, work_mode, desc):
+                            continue
 
                         jobs_scraped.append({
                             "title": title,
@@ -835,6 +936,10 @@ class ScraperService:
                         desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {desc_text}"
                         work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
 
+                        # Strict location validation
+                        if not is_location_matching(loc_text, location, work_mode, desc):
+                            continue
+
                         jobs_scraped.append({
                             "title": title,
                             "company": company,
@@ -913,6 +1018,10 @@ class ScraperService:
                         card_raw = card.get_text(separator=" | ", strip=True)
                         desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {card_raw}"
                         work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+
+                        # Strict location validation
+                        if not is_location_matching(loc_text, location, work_mode, desc):
+                            continue
 
                         jobs_scraped.append({
                             "title": title,

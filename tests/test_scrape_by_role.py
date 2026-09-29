@@ -92,3 +92,25 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(is_senior_title("Programador Pleno"))
         self.assertFalse(is_senior_title("Estagiário de TI"))
         self.assertFalse(is_senior_title("Desenvolvedor Web"))
+
+    def test_is_location_matching(self):
+        from app.services.scraper_service import is_location_matching
+
+        # 1. Target: Salvador, BA
+        self.assertTrue(is_location_matching(job_location="Salvador, Bahia", target_location="Salvador, BA", work_mode="On-site"))
+        self.assertTrue(is_location_matching(job_location="Salvador - BA", target_location="Salvador", work_mode="Hybrid"))
+        self.assertTrue(is_location_matching(job_location="Brasil", target_location="Salvador, BA", work_mode="Remote"))
+        self.assertTrue(is_location_matching(job_location="Remoto", target_location="Salvador, BA", work_mode="Remote"))
+        self.assertFalse(is_location_matching(job_location="São Paulo, SP", target_location="Salvador, BA", work_mode="On-site"))
+        self.assertFalse(is_location_matching(job_location="Curitiba, PR", target_location="Salvador, BA", work_mode="Hybrid"))
+        self.assertFalse(is_location_matching(job_location="Belo Horizonte, MG", target_location="Salvador, BA", work_mode="On-site"))
+
+        # 2. Target: Remoto
+        self.assertTrue(is_location_matching(job_location="Remoto", target_location="Remoto", work_mode="Remote"))
+        self.assertTrue(is_location_matching(job_location="Brasil", target_location="Remoto", work_mode="Remote"))
+        self.assertFalse(is_location_matching(job_location="São Paulo, SP", target_location="Remoto", work_mode="On-site"))
+
+        # 3. Target: Brasil
+        self.assertTrue(is_location_matching(job_location="São Paulo, SP", target_location="Brasil", work_mode="On-site"))
+        self.assertTrue(is_location_matching(job_location="Salvador, BA", target_location="Brasil", work_mode="On-site"))
+        self.assertFalse(is_location_matching(job_location="New York, USA", target_location="Brasil", work_mode="On-site"))
