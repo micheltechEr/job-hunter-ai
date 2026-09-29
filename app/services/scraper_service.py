@@ -217,9 +217,19 @@ class ScraperService:
             page = await context.new_page()
             try:
                 await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                for _ in range(2):
-                    await page.mouse.wheel(0, 800)
-                    await asyncio.sleep(1)
+                
+                # Dynamic scrolling based on limit (up to 50 jobs)
+                scroll_count = min(12, max(2, (limit // 4) + 1))
+                for _ in range(scroll_count):
+                    await page.mouse.wheel(0, 1000)
+                    await asyncio.sleep(0.8)
+                    try:
+                        more_btn = page.locator("button.infinite-scroller__show-more-button, button[aria-label*='mais vagas']")
+                        if await more_btn.is_visible():
+                            await more_btn.click()
+                            await asyncio.sleep(1)
+                    except Exception:
+                        pass
 
                 html = await page.content()
                 soup = BeautifulSoup(html, "html.parser")
@@ -362,10 +372,11 @@ class ScraperService:
                             except Exception:
                                 pass
 
-                            # Scroll to load feed items
-                            for _ in range(2):
+                            # Scroll to load feed items dynamically up to limit
+                            scroll_count = min(12, max(2, (limit // 3) + 1))
+                            for _ in range(scroll_count):
                                 await page.mouse.wheel(0, 1000)
-                                await asyncio.sleep(0.8)
+                                await asyncio.sleep(0.7)
 
                             html = await page.content()
                             soup = BeautifulSoup(html, "html.parser")
@@ -501,73 +512,60 @@ class ScraperService:
     async def _scrape_programathor_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
         kw_encoded = urllib.parse.quote(keyword)
-        url = f"https://programathor.com.br/jobs?text={kw_encoded}"
-        logger.info(f"Scraping Programathor: {url} (exclude_senior={exclude_senior})")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             page = await context.new_page()
             try:
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                html = await page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                cards = soup.select(".cell-list")
-                
-                count = 0
-                for card in cards:
-                    if count >= limit:
+                max_pages = min(5, max(1, (limit // 10) + 1))
+                for page_num in range(1, max_pages + 1):
+                    if len(jobs_scraped) >= limit:
+                        break
+
+                    url = f"https://programathor.com.br/jobs?text={kw_encoded}&page={page_num}" if page_num > 1 else f"https://programathor.com.br/jobs?text={kw_encoded}"
+                    logger.info(f"Scraping Programathor (p.{page_num}): {url} (exclude_senior={exclude_senior})")
+                    await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    html = await page.content()
+                    soup = BeautifulSoup(html, "html.parser")
+                    cards = soup.select(".cell-list")
+                    if not cards:
                         break
                     
-                    link_el = card.select_one("a")
-                    title_el = card.select_one(".cell-list-content h3")
-                    
-                    if not link_el or not title_el:
-                        continue
+                    for card in cards:
+                        if len(jobs_scraped) >= limit:
+                            break
                         
-                    title = title_el.get_text().strip()
-                    if exclude_senior and is_senior_title(title):
-                        logger.info(f"Skipping Senior Programathor job: '{title}'")
-                        continue
+                        link_el = card.select_one("a")
+                        title_el = card.select_one(".cell-list-content h3")
+                        
+                        if not link_el or not title_el:
+                            continue
+                            
+                        title = title_el.get_text().strip()
+                        if exclude_senior and is_senior_title(title):
+                            logger.info(f"Skipping Senior Programathor job: '{title}'")
+                            continue
 
-                    job_url = "https://programathor.com.br" + link_el["href"]
-                    
-                    spans = [s.get_text(strip=True) for s in card.select(".cell-list-content-icon span")]
-                    company = spans[0] if len(spans) > 0 else "Empresa Confidencial"
-                    location = spans[1] if len(spans) > 1 else "Brasil"
-                    
-                    desc = f"Vaga de {title} na empresa {company}. Localização: {location}."
-                    work_mode = "Remote" if "remoto" in location.lower() or "remote" in location.lower() else "Hybrid" if "hibrid" in location.lower() or "híbrid" in location.lower() else "On-site"
-                    salary = "N/A"
-                    
-                    # Try detail page
-                    try:
-                        detail_page = await context.new_page()
-                        r = await detail_page.goto(job_url, timeout=10000, wait_until="domcontentloaded")
-                        if r and r.status == 200:
-                            detail_html = await detail_page.content()
-                            detail_soup = BeautifulSoup(detail_html, "html.parser")
-                            desc_el = detail_soup.select_one(".wrapper-content-job, .job-description")
-                            if desc_el:
-                                desc = desc_el.get_text("\n").strip()
-                                work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
-                            salary_el = detail_soup.select_one(".fa-money-bill-alt")
-                            if salary_el and salary_el.parent:
-                                salary = salary_el.parent.get_text().strip()
-                        await detail_page.close()
-                    except Exception as det_err:
-                        logger.debug(f"Could not load Programathor detail page: {det_err}")
+                        job_url = "https://programathor.com.br" + link_el["href"]
+                        
+                        spans = [s.get_text(strip=True) for s in card.select(".cell-list-content-icon span")]
+                        company = spans[0] if len(spans) > 0 else "Empresa Confidencial"
+                        location = spans[1] if len(spans) > 1 else "Brasil"
+                        
+                        desc = f"Vaga de {title} na empresa {company}. Localização: {location}."
+                        work_mode = "Remote" if "remoto" in location.lower() or "remote" in location.lower() else "Hybrid" if "hibrid" in location.lower() or "híbrid" in location.lower() else "On-site"
+                        salary = "N/A"
 
-                    jobs_scraped.append({
-                        "title": title,
-                        "company": company,
-                        "url": job_url,
-                        "description": desc,
-                        "location": location,
-                        "work_mode": work_mode,
-                        "salary": salary
-                    })
-                    count += 1
+                        jobs_scraped.append({
+                            "title": title,
+                            "company": company,
+                            "url": job_url,
+                            "description": desc,
+                            "location": location,
+                            "work_mode": work_mode,
+                            "salary": salary
+                        })
             except Exception as e:
                 logger.error(f"Error scraping Programathor: {e}")
             finally:
@@ -589,7 +587,14 @@ class ScraperService:
             context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             page = await context.new_page()
             try:
-                await page.goto(url, timeout=30000, wait_until="networkidle")
+                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(2000)
+                
+                # Dynamic scrolling on Gupy
+                scroll_count = min(12, max(2, (limit // 4) + 1))
+                for _ in range(scroll_count):
+                    await page.mouse.wheel(0, 1000)
+                    await asyncio.sleep(0.8)
                 
                 html = await page.content()
                 soup = BeautifulSoup(html, "html.parser")
@@ -664,66 +669,72 @@ class ScraperService:
         jobs_scraped = []
         kw_encoded = urllib.parse.quote(keyword)
         loc_encoded = urllib.parse.quote(location)
-        url = f"https://br.indeed.com/jobs?q={kw_encoded}&l={loc_encoded}"
-        logger.info(f"Scraping Indeed: {url} (exclude_senior={exclude_senior})")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
             context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             page = await context.new_page()
             try:
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                html = await page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                cards = soup.select(".job_seen_beacon, [data-jk]")
-                
-                count = 0
-                for card in cards:
-                    if count >= limit:
+                max_pages = min(5, max(1, (limit // 10) + 1))
+                for page_idx in range(max_pages):
+                    if len(jobs_scraped) >= limit:
+                        break
+
+                    start_param = f"&start={page_idx * 10}" if page_idx > 0 else ""
+                    url = f"https://br.indeed.com/jobs?q={kw_encoded}&l={loc_encoded}{start_param}"
+                    logger.info(f"Scraping Indeed (p.{page_idx+1}): {url} (exclude_senior={exclude_senior})")
+                    await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    html = await page.content()
+                    soup = BeautifulSoup(html, "html.parser")
+                    cards = soup.select(".job_seen_beacon, [data-jk]")
+                    if not cards:
                         break
                     
-                    title_el = card.select_one(".jobTitle a, [data-jk], h2.jobTitle span, a[id*='job_']")
-                    company_el = card.select_one('[data-testid="company-name"], .companyName')
-                    loc_el = card.select_one('[data-testid="text-location"], .companyLocation')
-                    snippet_el = card.select_one('.job-snippet, [class*="snippet"], .underShelfFooter')
+                    for card in cards:
+                        if len(jobs_scraped) >= limit:
+                            break
+                        
+                        title_el = card.select_one(".jobTitle a, [data-jk], h2.jobTitle span, a[id*='job_']")
+                        company_el = card.select_one('[data-testid="company-name"], .companyName')
+                        loc_el = card.select_one('[data-testid="text-location"], .companyLocation')
+                        snippet_el = card.select_one('.job-snippet, [class*="snippet"], .underShelfFooter')
 
-                    if not title_el:
-                        continue
-
-                    title = title_el.get_text(strip=True)
-                    if not title:
-                        continue
-
-                    if exclude_senior and is_senior_title(title):
-                        logger.info(f"Skipping Senior Indeed job: '{title}'")
-                        continue
-
-                    job_key = card.get("data-jk") or (title_el.get("data-jk") if title_el else None)
-                    if not job_key:
-                        a_tag = card.select_one("a[href*='/rc/clk'], a[href*='/viewjob'], a[id*='job_']")
-                        if a_tag and "href" in a_tag.attrs:
-                            link = "https://br.indeed.com" + a_tag["href"]
-                        else:
+                        if not title_el:
                             continue
-                    else:
-                        link = f"https://br.indeed.com/viewjob?jk={job_key}"
 
-                    company = company_el.get_text(strip=True) if company_el else "Empresa Confidencial"
-                    loc_text = loc_el.get_text(strip=True) if loc_el else location
-                    snippet = snippet_el.get_text(strip=True) if snippet_el else ""
-                    desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {snippet}"
-                    work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+                        title = title_el.get_text(strip=True)
+                        if not title:
+                            continue
 
-                    jobs_scraped.append({
-                        "title": title,
-                        "company": company,
-                        "url": link,
-                        "description": desc,
-                        "location": loc_text,
-                        "work_mode": work_mode,
-                        "salary": "N/A"
-                    })
-                    count += 1
+                        if exclude_senior and is_senior_title(title):
+                            logger.info(f"Skipping Senior Indeed job: '{title}'")
+                            continue
+
+                        job_key = card.get("data-jk", "")
+                        if not job_key:
+                            a_tag = card.select_one("a[href*='/rc/clk'], a[href*='/viewjob']")
+                            if a_tag and "href" in a_tag.attrs:
+                                link = "https://br.indeed.com" + a_tag["href"]
+                            else:
+                                continue
+                        else:
+                            link = f"https://br.indeed.com/viewjob?jk={job_key}"
+
+                        company = company_el.get_text(strip=True) if company_el else "Empresa Confidencial"
+                        loc_text = loc_el.get_text(strip=True) if loc_el else location
+                        snippet = snippet_el.get_text(strip=True) if snippet_el else ""
+                        desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {snippet}"
+                        work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+
+                        jobs_scraped.append({
+                            "title": title,
+                            "company": company,
+                            "url": link,
+                            "description": desc,
+                            "location": loc_text,
+                            "work_mode": work_mode,
+                            "salary": "N/A"
+                        })
             except Exception as e:
                 logger.error(f"Error scraping Indeed: {e}")
             finally:
@@ -738,63 +749,68 @@ class ScraperService:
     async def _scrape_infojobs_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
         kw_encoded = urllib.parse.quote(keyword)
-        url = f"https://www.infojobs.com.br/empregos.aspx?palabra={kw_encoded}"
-        logger.info(f"Scraping InfoJobs: {url} (exclude_senior={exclude_senior})")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
             context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             page = await context.new_page()
             try:
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                html = await page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                cards = soup.select(".element-vaga, [data-id], .js_vacancyRow, [class*='js_vacancy']")
-                
-                count = 0
-                for card in cards:
-                    if count >= limit:
+                max_pages = min(5, max(1, (limit // 15) + 1))
+                for page_num in range(1, max_pages + 1):
+                    if len(jobs_scraped) >= limit:
                         break
 
-                    title_el = card.select_one("a.text-decoration-none, .h2, h2, a[href*='/vaga-de-']")
-                    company_el = card.select_one(".text-body, [class*='company'], .font-weight-bold, a[href*='/empresa-']")
-                    loc_el = card.select_one(".text-medium, [class*='location'], .text-muted")
-                    desc_el = card.select_one(".text-medium, p, [class*='description']")
+                    url = f"https://www.infojobs.com.br/empregos.aspx?palabra={kw_encoded}&page={page_num}" if page_num > 1 else f"https://www.infojobs.com.br/empregos.aspx?palabra={kw_encoded}"
+                    logger.info(f"Scraping InfoJobs (p.{page_num}): {url} (exclude_senior={exclude_senior})")
+                    await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    html = await page.content()
+                    soup = BeautifulSoup(html, "html.parser")
+                    cards = soup.select(".element-vaga, [data-id], .js_vacancyRow, [class*='js_vacancy']")
+                    if not cards:
+                        break
+                    
+                    for card in cards:
+                        if len(jobs_scraped) >= limit:
+                            break
 
-                    if not title_el:
-                        continue
+                        title_el = card.select_one("a.text-decoration-none, .h2, h2, a[href*='/vaga-de-']")
+                        company_el = card.select_one(".text-body, [class*='company'], .font-weight-bold, a[href*='/empresa-']")
+                        loc_el = card.select_one(".text-medium, [class*='location'], .text-muted")
+                        desc_el = card.select_one(".text-medium, p, [class*='description']")
 
-                    title_raw = title_el.get_text(strip=True)
-                    title = clean_job_title(title_raw)
-                    if not title or is_unrelated_non_tech_title(title) or not is_role_relevant(title, keyword):
-                        continue
+                        if not title_el:
+                            continue
 
-                    if exclude_senior and is_senior_title(title):
-                        logger.info(f"Skipping Senior InfoJobs job: '{title}'")
-                        continue
+                        title_raw = title_el.get_text(strip=True)
+                        title = clean_job_title(title_raw)
+                        if not title or is_unrelated_non_tech_title(title) or not is_role_relevant(title, keyword):
+                            continue
 
-                    link = title_el["href"] if "href" in title_el.attrs else ""
-                    if link and not link.startswith("http"):
-                        link = "https://www.infojobs.com.br" + link
-                    if not link:
-                        continue
+                        if exclude_senior and is_senior_title(title):
+                            logger.info(f"Skipping Senior InfoJobs job: '{title}'")
+                            continue
 
-                    company = company_el.get_text(strip=True) if company_el else "Empresa Confidencial"
-                    loc_text = loc_el.get_text(strip=True) if loc_el else "Brasil"
-                    desc_text = desc_el.get_text(strip=True) if desc_el else ""
-                    desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {desc_text}"
-                    work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+                        link = title_el["href"] if "href" in title_el.attrs else ""
+                        if link and not link.startswith("http"):
+                            link = "https://www.infojobs.com.br" + link
+                        if not link:
+                            continue
 
-                    jobs_scraped.append({
-                        "title": title,
-                        "company": company,
-                        "url": link,
-                        "description": desc,
-                        "location": loc_text,
-                        "work_mode": work_mode,
-                        "salary": "N/A"
-                    })
-                    count += 1
+                        company = company_el.get_text(strip=True) if company_el else "Empresa Confidencial"
+                        loc_text = loc_el.get_text(strip=True) if loc_el else "Brasil"
+                        desc_text = desc_el.get_text(strip=True) if desc_el else ""
+                        desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {desc_text}"
+                        work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+
+                        jobs_scraped.append({
+                            "title": title,
+                            "company": company,
+                            "url": link,
+                            "description": desc,
+                            "location": loc_text,
+                            "work_mode": work_mode,
+                            "salary": "N/A"
+                        })
             except Exception as e:
                 logger.error(f"Error scraping InfoJobs: {e}")
             finally:
@@ -809,63 +825,68 @@ class ScraperService:
     async def _scrape_trabalhabrasil_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
         kw_encoded = urllib.parse.quote(keyword)
-        url = f"https://www.trabalhabrasil.com.br/vagas-de-emprego?sp={kw_encoded}"
-        logger.info(f"Scraping Trabalha Brasil: {url} (exclude_senior={exclude_senior})")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
             context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             page = await context.new_page()
             try:
-                await page.goto(url, timeout=30000)
-                await page.wait_for_timeout(3000)
-                html = await page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                cards = soup.select('#jobs-wrapper .job__vacancy, .jg__job, [class*="job-card"]:not([class*="skeleton"]), article[class*="job"]')
-                if not cards:
-                    cards = soup.select('a[href*="/vagas-de-emprego-em-"]')
-
-                count = 0
-                for card in cards:
-                    if count >= limit:
+                max_pages = min(5, max(1, (limit // 15) + 1))
+                for page_num in range(1, max_pages + 1):
+                    if len(jobs_scraped) >= limit:
                         break
 
-                    title_el = card.select_one('[class*="title"], h2, h3')
-                    company_el = card.select_one('[class*="company"], [class*="enterprise"]')
-                    loc_el = card.select_one('[class*="location"], [class*="city"]')
-                    link_el = card if (card.name == "a" and card.get("href")) else card.select_one("a[href]")
+                    url = f"https://www.trabalhabrasil.com.br/vagas-de-emprego?sp={kw_encoded}&pagina={page_num}" if page_num > 1 else f"https://www.trabalhabrasil.com.br/vagas-de-emprego?sp={kw_encoded}"
+                    logger.info(f"Scraping Trabalha Brasil (p.{page_num}): {url} (exclude_senior={exclude_senior})")
+                    await page.goto(url, timeout=30000)
+                    await page.wait_for_timeout(2500)
+                    html = await page.content()
+                    soup = BeautifulSoup(html, "html.parser")
+                    cards = soup.select('#jobs-wrapper .job__vacancy, .jg__job, [class*="job-card"]:not([class*="skeleton"]), article[class*="job"]')
+                    if not cards:
+                        cards = soup.select('a[href*="/vagas-de-emprego-em-"]')
+                    if not cards:
+                        break
 
-                    title_raw = title_el.get_text(strip=True) if title_el else card.get_text(strip=True).split("\n")[0]
-                    title = clean_job_title(title_raw)
-                    if not title or is_unrelated_non_tech_title(title) or not is_role_relevant(title, keyword):
-                        continue
+                    for card in cards:
+                        if len(jobs_scraped) >= limit:
+                            break
 
-                    if exclude_senior and is_senior_title(title):
-                        logger.info(f"Skipping Senior Trabalha Brasil job: '{title}'")
-                        continue
+                        title_el = card.select_one('.job__vacancy__title, h2, h3, a[title], strong, [class*="title"]')
+                        company_el = card.select_one('[class*="company"], [class*="enterprise"]')
+                        loc_el = card.select_one('[class*="location"], [class*="city"]')
+                        link_el = card if (card.name == "a" and card.get("href")) else card.select_one("a[href]")
 
-                    link = link_el["href"] if (link_el and "href" in link_el.attrs) else ""
-                    if link and not link.startswith("http"):
-                        link = "https://www.trabalhabrasil.com.br" + link
-                    if not link:
-                        continue
+                        title_raw = title_el.get_text(strip=True) if title_el else card.get_text(strip=True).split("\n")[0]
+                        title = clean_job_title(title_raw)
+                        if not title or is_unrelated_non_tech_title(title) or not is_role_relevant(title, keyword):
+                            continue
 
-                    company = company_el.get_text(strip=True) if company_el else "Empresa Confidencial"
-                    loc_text = loc_el.get_text(strip=True) if loc_el else "Brasil"
-                    card_raw = card.get_text(separator=" | ", strip=True)
-                    desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {card_raw}"
-                    work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+                        if exclude_senior and is_senior_title(title):
+                            logger.info(f"Skipping Senior Trabalha Brasil job: '{title}'")
+                            continue
 
-                    jobs_scraped.append({
-                        "title": title,
-                        "company": company,
-                        "url": link,
-                        "description": desc,
-                        "location": loc_text,
-                        "work_mode": work_mode,
-                        "salary": "N/A"
-                    })
-                    count += 1
+                        link = link_el["href"] if (link_el and "href" in link_el.attrs) else ""
+                        if link and not link.startswith("http"):
+                            link = "https://www.trabalhabrasil.com.br" + link
+                        if not link:
+                            continue
+
+                        company = company_el.get_text(strip=True) if company_el else "Empresa Confidencial"
+                        loc_text = loc_el.get_text(strip=True) if loc_el else "Brasil"
+                        card_raw = card.get_text(separator=" | ", strip=True)
+                        desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {card_raw}"
+                        work_mode = "Remote" if "remoto" in desc.lower() or "remote" in desc.lower() else "Hybrid" if "hibrid" in desc.lower() or "híbrid" in desc.lower() else "On-site"
+
+                        jobs_scraped.append({
+                            "title": title,
+                            "company": company,
+                            "url": link,
+                            "description": desc,
+                            "location": loc_text,
+                            "work_mode": work_mode,
+                            "salary": "N/A"
+                        })
             except Exception as e:
                 logger.error(f"Error scraping Trabalha Brasil: {e}")
             finally:
