@@ -40,10 +40,10 @@ async def connect_linkedin(background_tasks: BackgroundTasks):
     """
     try:
         from app.services.scraper_service import _run_in_proactor_thread
-        from app.services.linkedin_auth import interactive_login
+        from app.services.linkedin_auth import async_interactive_login
 
         # Launch login in dedicated background proactor thread
-        asyncio.create_task(_run_in_proactor_thread(interactive_login))
+        asyncio.create_task(_run_in_proactor_thread(async_interactive_login))
 
         return {
             "status": "initiated",

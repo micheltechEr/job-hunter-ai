@@ -168,7 +168,10 @@ def _run_in_proactor_thread(coro_fn: Callable, *args, **kwargs) -> Any:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(coro_fn(*args, **kwargs))
+            res = coro_fn(*args, **kwargs)
+            if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                return loop.run_until_complete(res)
+            return res
         finally:
             loop.close()
     return asyncio.to_thread(worker)

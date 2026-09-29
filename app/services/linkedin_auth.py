@@ -26,24 +26,37 @@ def get_default_linkedin_profile_dir() -> Path:
     return local_p
 
 
+def is_valid_storage_state(path: Optional[Path]) -> bool:
+    """Checks if a storage_state.json contains the active session cookie (li_at)."""
+    if not path or not path.exists() or not path.is_file():
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        cookies = data.get("cookies", [])
+        return any(c.get("name") == "li_at" for c in cookies)
+    except Exception:
+        return False
+
+
 def get_linkedin_storage_state_path() -> Optional[Path]:
     """
     Locates an existing storage_state.json with authenticated LinkedIn session cookies inside job-hunter-ai.
     """
     if settings.LINKEDIN_STORAGE_STATE_PATH:
         p = Path(settings.LINKEDIN_STORAGE_STATE_PATH)
-        if p.exists() and p.is_file():
+        if is_valid_storage_state(p):
             return p
 
     # 1. Check local project directory first (self-contained inside job-hunter-ai)
     local_state = PROJECT_ROOT / "browser_profile" / "storage_state.json"
-    if local_state.exists() and local_state.is_file():
+    if is_valid_storage_state(local_state):
         return local_state
 
     # 2. Check shared user workspace directory fallback
     home = Path(os.environ.get("USERPROFILE") or os.environ.get("HOME") or ".")
     shared_state = home / ".linkedin_optimizer_workspace" / "browser_profile" / "storage_state.json"
-    if shared_state.exists() and shared_state.is_file():
+    if is_valid_storage_state(shared_state):
         return shared_state
 
     return None
@@ -72,15 +85,39 @@ async def async_interactive_login(target_url: str = "https://www.linkedin.com/lo
         page = await context.new_page()
         await page.goto(target_url, timeout=60000, wait_until="domcontentloaded")
 
-        # Wait for user confirmation in terminal or detect navigation to feed
-        print("\n--> Após fazer login e ver o feed do LinkedIn, pressione ENTER no terminal para salvar a sessão...")
-        input("Pressione ENTER após concluir o login no navegador: ")
+        # Auto-detect login without blocking on terminal input
+        logger.info("Waiting for user to authenticate in the open browser window...")
+        print("\n--> [LinkedIn Auth] Faça login no navegador aberto. A sessão será detectada e salva automaticamente...")
+        
+        login_successful = False
+        for _ in range(120):  # Wait up to 120 seconds for user login
+            await page.wait_for_timeout(1000)
+            try:
+                cookies = await context.cookies()
+                has_li_at = any(c.get("name") == "li_at" for c in cookies)
+                current_url = page.url
+                if has_li_at or "/feed" in current_url or "/in/" in current_url or "/mynetwork" in current_url:
+                    login_successful = True
+                    logger.info("LinkedIn login detected successfully!")
+                    print("[LinkedIn Auth] Login detectado com sucesso!")
+                    await page.wait_for_timeout(2000)
+                    break
+            except Exception:
+                # Page or browser might be closing
+                break
 
-        await context.storage_state(path=str(state_file))
-        await browser.close()
+        if login_successful:
+            await context.storage_state(path=str(state_file))
+            print(f"[LinkedIn Auth] Sessão salva com sucesso em: {state_file}")
+            logger.info(f"LinkedIn persistent storage state saved to {state_file}")
+        else:
+            logger.warning("[LinkedIn Auth] Timeout de login ou autenticação não concluída.")
 
-    print(f"[LinkedIn Auth] Sessão salva com sucesso em: {state_file}")
-    logger.info(f"LinkedIn persistent storage state saved to {state_file}")
+        try:
+            await browser.close()
+        except Exception:
+            pass
+
     return state_file
 
 
