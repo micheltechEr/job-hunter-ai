@@ -411,8 +411,8 @@ class ScraperService:
 
                                 first_line = post_text.split("\n")[0][:100]
                                 inferred_title = clean_job_title(first_line)
-                                if not is_tech_role(inferred_title):
-                                    inferred_title = f"Vaga {kw_clean} (Post por {author})"
+                                if not is_role_relevant(inferred_title, kw_clean):
+                                    inferred_title = f"{kw_clean} (Post por {author})"
 
                                 if exclude_senior and (is_senior_title(inferred_title) or is_senior_title(first_line)):
                                     logger.info(f"Skipping Senior LinkedIn post: '{inferred_title}'")
