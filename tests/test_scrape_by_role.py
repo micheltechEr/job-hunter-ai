@@ -114,3 +114,29 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_location_matching(job_location="São Paulo, SP", target_location="Brasil", work_mode="On-site"))
         self.assertTrue(is_location_matching(job_location="Salvador, BA", target_location="Brasil", work_mode="On-site"))
         self.assertFalse(is_location_matching(job_location="New York, USA", target_location="Brasil", work_mode="On-site"))
+
+    def test_is_role_relevant_semantic_domain_gating(self):
+        from app.services.scraper_service import is_role_relevant
+
+        # Target: Analista de Dados
+        self.assertTrue(is_role_relevant("Analista de Dados Júnior", "Analista de Dados"))
+        self.assertTrue(is_role_relevant("Data Analyst Pleno", "Analista de Dados"))
+        self.assertTrue(is_role_relevant("Analista de Business Intelligence (BI)", "Analista de Dados"))
+        self.assertTrue(is_role_relevant("Analista de Power BI e SQL", "Analista de Dados"))
+        self.assertTrue(is_role_relevant("Analytics Engineer", "Analista de Dados"))
+
+        # False positives from operational/unrelated roles must be REJECTED
+        self.assertFalse(is_role_relevant("Analista de RM", "Analista de Dados"))
+        self.assertFalse(is_role_relevant("Analista de Qualidade", "Analista de Dados"))
+        self.assertFalse(is_role_relevant("Analista de EHG", "Analista de Dados"))
+        self.assertFalse(is_role_relevant("Analista de ESG", "Analista de Dados"))
+        self.assertFalse(is_role_relevant("Analista de Operações", "Analista de Dados"))
+        self.assertFalse(is_role_relevant("Analista de Suporte Técnico", "Analista de Dados"))
+        self.assertFalse(is_role_relevant("Analista Financeiro", "Analista de Dados"))
+        self.assertFalse(is_role_relevant("Analista de Logística", "Analista de Dados"))
+
+        # Target: Desenvolvedor Full Stack
+        self.assertTrue(is_role_relevant("Desenvolvedor Full Stack Jr", "Desenvolvedor Full Stack"))
+        self.assertTrue(is_role_relevant("Python Developer", "Desenvolvedor Full Stack"))
+        self.assertFalse(is_role_relevant("Analista de RM", "Desenvolvedor Full Stack"))
+        self.assertFalse(is_role_relevant("Analista de Operações", "Desenvolvedor Full Stack"))

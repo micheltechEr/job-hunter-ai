@@ -35,19 +35,31 @@ NON_TECH_PATTERNS = [
     r"\bdepartamento\s+pessoal\b", r"\bcomprador\b", r"\blog[ií]stica\b", r"\bcompras\b",
     # Healthcare
     r"\benfermeir[oa]\b", r"\benfermagem\b", r"\bm[eé]dic[oa]\b", r"\bdentista\b", r"\bpsic[oó]log[oa]\b",
-    r"\bnutricionista\b", r"\bfarmac[eê]utic[oa]\b", r"\bfisioterapeuta\b"
+    r"\bnutricionista\b", r"\bfarmac[eê]utic[oa]\b", r"\bfisioterapeuta\b",
+    # Non-tech / Operational Analyst False Positives
+    r"\banalista\s+de\s+(?:rm|totvs|erp|qualidade|esg|ehg|opera[cç][oõ]es|log[ií]stica|suprimentos|compras|fiscal|cont[aá]bil|financeir[oa]|cr[eé]dito|cobran[cç]a|rh|recursos\s+humanos|departamento\s+pessoal|dp|suporte|atendimento|p[oó]s[- ]vendas?|planejamento\s+financeiro|folha|frota|faturamento|sinistro|riscos?|laborat[oó]rio|compliance|processos?|facilities|manuten[cç][aã]o|farmac[eê]utic[oa]|qu[ií]mic[oa]|importa[cç][aã]o|exporta[cç][aã]o)\b"
 ]
 
-CORE_TECH_KEYWORDS = [
+DATA_KEYWORDS = [
+    "dado", "dados", "data", "analytics", "bi", "business intelligence",
+    "power bi", "powerbi", "sql", "tableau", "etl", "bigquery", "databricks",
+    "looker", "machine learning", "estatística", "estatistica", "analytics engineer",
+    "data analyst", "analista de dados", "data science", "ciência de dados", "cientista de dados",
+    "engenheiro de dados", "engenharia de dados", "data engineer"
+]
+
+DEV_KEYWORDS = [
     "desenvolvedor", "desenvolvedora", "developer", "dev", "programador", "programadora",
     "software", "frontend", "front-end", "backend", "back-end", "fullstack", "full-stack", "full stack",
     "engenheiro de software", "engenheira de software", "software engineer",
     "python", "javascript", "typescript", "react", "node", "nodejs", "node.js", "java", "golang", "go",
     "c#", ".net", "dotnet", "php", "laravel", "ruby", "rails", "rust", "c++", "kotlin", "swift", "flutter",
-    "engenheiro de dados", "engenharia de dados", "data engineer", "analista de dados", "data analyst",
-    "analista de bi", "business intelligence", "power bi", "machine learning", "ia", "ai engineer",
-    "devops", "cloud engineer", "cloud", "qa", "quality assurance", "tester", "sre"
+    "mobile", "web developer"
 ]
+
+CORE_TECH_KEYWORDS = list(set(DATA_KEYWORDS + DEV_KEYWORDS + [
+    "devops", "cloud engineer", "cloud", "qa", "quality assurance", "tester", "sre"
+]))
 
 
 def clean_job_title(title: str) -> str:
@@ -74,21 +86,39 @@ def is_unrelated_non_tech_title(title: str) -> bool:
 
 
 def is_role_relevant(title: str, target_keyword: str = "") -> bool:
-    """Strictly validates if a title belongs to authentic software, developer, data or tech roles."""
+    """Strictly validates if a title belongs to authentic software, developer, data or tech roles matching target domain."""
     if not title or len(title.strip()) < 3:
         return False
 
     t_clean = clean_job_title(title).lower()
+    kw_norm = target_keyword.strip().lower() if target_keyword else ""
 
-    # 1. Block platform noise artifacts (e.g. 'Copiar ID da vaga', 'NS - Vagas Leo Madeiras', short noise)
+    # 1. Block platform noise artifacts
     if "copiar id" in t_clean or re.match(r"^[a-z0-9\s\-_/|]{1,6}$", t_clean.strip()):
         return False
 
-    # 2. Block non-tech patterns
+    # 2. Block non-tech and operational analyst patterns
     if is_unrelated_non_tech_title(title):
         return False
 
-    # 3. Must contain at least one authentic core tech keyword
+    # 3. Domain-Specific Alignment based on target_keyword
+    # A. Target is DATA / ANALYTICS
+    if any(dk in kw_norm for dk in ["dado", "dados", "data", "analytics", "bi", "power bi", "sql"]):
+        return any(re.search(r'\b' + re.escape(dk) + r'\b', t_clean) for dk in DATA_KEYWORDS)
+
+    # B. Target is SOFTWARE / DEV
+    if any(devk in kw_norm for devk in ["desenvolvedor", "developer", "dev", "programador", "software", "full stack", "fullstack", "frontend", "backend", "python", "react", "node", "java", "php", "mobile"]):
+        return any(re.search(r'\b' + re.escape(devk) + r'\b', t_clean) for devk in DEV_KEYWORDS)
+
+    # C. Target is QA / TESTING
+    if any(qak in kw_norm for qak in ["qa", "tester", "quality assurance", "testes"]):
+        return any(re.search(r'\b' + re.escape(qak) + r'\b', t_clean) for qak in ["qa", "quality assurance", "tester", "testes", "automação de testes"])
+
+    # D. Target is DEVOPS / CLOUD
+    if any(dvk in kw_norm for dvk in ["devops", "cloud", "sre", "infraestrutura"]):
+        return any(re.search(r'\b' + re.escape(dvk) + r'\b', t_clean) for dvk in ["devops", "cloud", "sre", "infraestrutura", "kubernetes", "aws", "azure", "gcp"])
+
+    # Default fallback: check if title contains any known tech/data keyword
     has_tech_kw = any(re.search(r'\b' + re.escape(tk) + r'\b', t_clean) for tk in CORE_TECH_KEYWORDS)
     if not has_tech_kw:
         has_tech_kw = any(tk in t_clean for tk in [
@@ -337,6 +367,10 @@ class ScraperService:
                         continue
                         
                     job_title = title_el.get_text().strip()
+                    if not is_role_relevant(job_title, keyword):
+                        logger.info(f"Skipping non-relevant LinkedIn job: '{job_title}' (Target was '{keyword}')")
+                        continue
+
                     if exclude_senior and is_senior_title(job_title):
                         logger.info(f"Skipping Senior LinkedIn job: '{job_title}'")
                         continue
@@ -659,6 +693,10 @@ class ScraperService:
                             continue
                             
                         title = title_el.get_text().strip()
+                        if not is_role_relevant(title, keyword):
+                            logger.info(f"Skipping non-relevant Programathor job: '{title}' (Target was '{keyword}')")
+                            continue
+
                         if exclude_senior and is_senior_title(title):
                             logger.info(f"Skipping Senior Programathor job: '{title}'")
                             continue
@@ -735,6 +773,10 @@ class ScraperService:
                     company = text_parts[0] if len(text_parts) > 0 else "Empresa Confidencial"
                     title = text_parts[1] if len(text_parts) > 1 else "Vaga Gupy"
                     
+                    if not is_role_relevant(title, keyword):
+                        logger.info(f"Skipping non-relevant Gupy job: '{title}' (Target was '{keyword}')")
+                        continue
+
                     if exclude_senior and is_senior_title(title):
                         logger.info(f"Skipping Senior Gupy job: '{title}'")
                         continue
@@ -831,6 +873,10 @@ class ScraperService:
 
                         title = title_el.get_text(strip=True)
                         if not title:
+                            continue
+
+                        if not is_role_relevant(title, keyword):
+                            logger.info(f"Skipping non-relevant Indeed job: '{title}' (Target was '{keyword}')")
                             continue
 
                         if exclude_senior and is_senior_title(title):
