@@ -41,22 +41,34 @@ class LinkedInSearchProvider(BaseSearchProvider):
         raw_query = query.query
         logger.info(f"Executing LinkedIn search query [{query.type}|L{query.layer}|{query.priority}]: '{raw_query}' (limit={limit})")
 
-        # Reuse existing scraper infrastructure via scraper_service
+        # Reuse existing scraper infrastructure via scraper_service (posts + jobs)
+        raw_items = []
+        try:
+            raw_posts = await scraper_service.scrape_linkedin_posts(
+                keyword=raw_query,
+                limit=limit,
+                exclude_senior=False,
+                date_filter="past-week"
+            )
+            raw_items.extend(raw_posts)
+        except Exception as e:
+            logger.error(f"Error executing LinkedIn posts scraper for query '{raw_query}': {e}")
+
         try:
             raw_jobs = await scraper_service.scrape_linkedin_jobs(
                 keyword=raw_query,
                 location=location,
                 limit=limit,
-                exclude_senior=False # We let publication_matcher perform fine-grained gating
+                exclude_senior=False
             )
+            raw_items.extend(raw_jobs)
         except Exception as e:
-            logger.error(f"Error executing LinkedIn scraper for query '{raw_query}': {e}")
-            raw_jobs = []
+            logger.error(f"Error executing LinkedIn jobs scraper for query '{raw_query}': {e}")
 
         normalized_publications: List[LinkedInPublication] = []
-        for r_job in raw_jobs:
+        for r_item in raw_items:
             pub = publication_normalizer.normalize_publication(
-                raw_data=r_job,
+                raw_data=r_item,
                 query_origin=raw_query
             )
             normalized_publications.append(pub)

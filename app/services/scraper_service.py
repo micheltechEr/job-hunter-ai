@@ -286,16 +286,21 @@ class ScraperService:
         return jobs_scraped
 
     # ---------------- LinkedIn Posts / Feed Scraper ----------------
-    async def scrape_linkedin_posts(self, keyword: str, limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
-        """Scrapes hiring posts from LinkedIn content feed using Playwright via background proactor thread."""
-        return await _run_in_proactor_thread(self._scrape_linkedin_posts_impl, keyword, limit, exclude_senior)
+    async def scrape_linkedin_posts(self, keyword: str, limit: int = 5, exclude_senior: bool = False, date_filter: str = "past-week") -> List[Dict]:
+        """Scrapes hiring posts from LinkedIn content feed prioritizing past 24h to 1 week."""
+        return await _run_in_proactor_thread(self._scrape_linkedin_posts_impl, keyword, limit, exclude_senior, date_filter)
 
-    async def _scrape_linkedin_posts_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
+    async def _scrape_linkedin_posts_impl(self, keyword: str, limit: int, exclude_senior: bool = False, date_filter: str = "past-week") -> List[Dict]:
         jobs_scraped = []
-        kw_query = f"{keyword} (contratando OR vaga OR 'estamos contratando' OR 'envie seu cv')"
-        kw_encoded = urllib.parse.quote(kw_query)
-        url = f"https://www.linkedin.com/search/results/content/?keywords={kw_encoded}&sortBy=%22date_posted%22"
-        logger.info(f"Scraping LinkedIn Posts: {url} (exclude_senior={exclude_senior})")
+        seen_urls = set()
+        
+        kw_clean = keyword.strip().strip('"')
+        
+        # Build search queries prioritizing hiring keywords
+        queries_to_try = [
+            f'"{kw_clean}" (contratando OR vaga OR "estamos contratando" OR "envie seu cv" OR "mande seu cv")',
+            f'{kw_clean} (contratando OR oportunidade OR "vaga aberta" OR "compartilhem")'
+        ]
 
         from app.services.linkedin_auth import get_linkedin_storage_state_path
         state_file = get_linkedin_storage_state_path()
@@ -323,84 +328,102 @@ class ScraperService:
             
             page = await context.new_page()
             try:
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                await page.wait_for_timeout(3000)
+                # Priority date filters: first 24h, then 1 week
+                date_stages = ["past-24h", "past-week"] if date_filter in ("past-week", "past-24h") else [date_filter]
 
-                # Check if redirected to login wall
-                if "login" in page.url or "uas/login" in page.url or "checkpoint" in page.url:
-                    logger.warning("LinkedIn post search requires active session. Connect LinkedIn via Dashboard.")
-                    return []
-
-                # Scroll to load feed items
-                for _ in range(2):
-                    await page.mouse.wheel(0, 1000)
-                    await asyncio.sleep(1)
-
-                html = await page.content()
-                soup = BeautifulSoup(html, "html.parser")
-                
-                cards = soup.select(".feed-shared-update-v2, [data-urn*='activity'], .feed-shared-update-v2__content, div[data-id*='urn:li:activity']")
-                if not cards:
-                    cards = soup.select("[class*='feed-shared-update'], [class*='update-components-actor']")
-                
-                logger.info(f"Found {len(cards)} LinkedIn post elements")
-
-                count = 0
-                for card in cards:
-                    if count >= limit:
+                for stage in date_stages:
+                    if len(jobs_scraped) >= limit:
                         break
 
-                    actor_el = card.select_one(".update-components-actor__name, .feed-shared-actor__name, [class*='actor__name']")
-                    title_el = card.select_one(".update-components-actor__description, .feed-shared-actor__description, [class*='actor__description']")
-                    text_el = card.select_one(".update-components-text, .feed-shared-update-v2__description, [class*='feed-shared-inline-show-more-text'], .break-words")
-                    link_el = card.select_one("a[href*='activity'], a[href*='/posts/'], a[href*='urn:li:activity'], a.app-aware-link")
+                    for q_text in queries_to_try:
+                        if len(jobs_scraped) >= limit:
+                            break
 
-                    post_text = text_el.get_text(separator="\n", strip=True) if text_el else ""
-                    if not post_text or len(post_text) < 30:
-                        continue
+                        kw_encoded = urllib.parse.quote(q_text)
+                        url = f"https://www.linkedin.com/search/results/content/?keywords={kw_encoded}&datePosted=%22{stage}%22&sortBy=%22date_posted%22"
+                        logger.info(f"Scraping LinkedIn Posts [{stage}]: {url} (exclude_senior={exclude_senior})")
 
-                    author = actor_el.get_text(strip=True) if actor_el else "Recrutador LinkedIn"
-                    headline = title_el.get_text(strip=True) if title_el else "Tech Recruiter / RH"
-                    
-                    if link_el and "href" in link_el.attrs:
-                        post_url = link_el["href"].split("?")[0]
-                        if not post_url.startswith("http"):
-                            post_url = "https://www.linkedin.com" + post_url
-                    else:
-                        post_urn = card.get("data-urn") or card.get("data-id") or ""
-                        if "activity:" in post_urn:
-                            act_id = post_urn.split("activity:")[-1].split("]")[0].split("\"")[0]
-                            post_url = f"https://www.linkedin.com/feed/update/urn:li:activity:{act_id}/"
-                        else:
-                            post_url = f"https://www.linkedin.com/search/results/content/?keywords={kw_encoded}"
+                        try:
+                            await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                            await page.wait_for_timeout(2500)
 
-                    email_match = re.search(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", post_text)
-                    extracted_email = email_match.group(1) if email_match else None
+                            # Check if redirected to login wall
+                            if "login" in page.url or "uas/login" in page.url or "checkpoint" in page.url:
+                                logger.warning("LinkedIn post search requires active session. Connect LinkedIn via Dashboard.")
+                                return jobs_scraped
 
-                    first_line = post_text.split("\n")[0][:100]
-                    inferred_title = clean_job_title(first_line)
-                    if not is_tech_role(inferred_title):
-                        inferred_title = f"Vaga {keyword} (Post por {author})"
+                            # Scroll to load feed items
+                            for _ in range(2):
+                                await page.mouse.wheel(0, 1000)
+                                await asyncio.sleep(0.8)
 
-                    if exclude_senior and (is_senior_title(inferred_title) or is_senior_title(first_line)):
-                        logger.info(f"Skipping Senior LinkedIn post: '{inferred_title}'")
-                        continue
+                            html = await page.content()
+                            soup = BeautifulSoup(html, "html.parser")
+                            
+                            cards = soup.select(".feed-shared-update-v2, [data-urn*='activity'], .feed-shared-update-v2__content, div[data-id*='urn:li:activity']")
+                            if not cards:
+                                cards = soup.select("[class*='feed-shared-update'], [class*='update-components-actor']")
 
-                    work_mode = "Remote" if ("remoto" in post_text.lower() or "remote" in post_text.lower() or "home office" in post_text.lower()) else ("Hybrid" if ("hibrid" in post_text.lower() or "híbrid" in post_text.lower()) else "On-site")
-                    desc = f"Publicação de vaga por {author} ({headline}):\n\n{post_text}"
+                            for card in cards:
+                                if len(jobs_scraped) >= limit:
+                                    break
 
-                    jobs_scraped.append({
-                        "title": inferred_title,
-                        "company": author,
-                        "url": post_url,
-                        "description": desc,
-                        "location": "Brasil",
-                        "work_mode": work_mode,
-                        "salary": "A combinar",
-                        "recipient_email": extracted_email,
-                        "source": "linkedin_post"
-                    })
-                    count += 1
+                                actor_el = card.select_one(".update-components-actor__name, .feed-shared-actor__name, [class*='actor__name']")
+                                title_el = card.select_one(".update-components-actor__description, .feed-shared-actor__description, [class*='actor__description']")
+                                text_el = card.select_one(".update-components-text, .feed-shared-update-v2__description, [class*='feed-shared-inline-show-more-text'], .break-words")
+                                link_el = card.select_one("a[href*='activity'], a[href*='/posts/'], a[href*='urn:li:activity'], a.app-aware-link")
+
+                                post_text = text_el.get_text(separator="\n", strip=True) if text_el else ""
+                                if not post_text or len(post_text) < 30:
+                                    continue
+
+                                author = actor_el.get_text(strip=True) if actor_el else "Recrutador LinkedIn"
+                                headline = title_el.get_text(strip=True) if title_el else "Tech Recruiter / RH"
+                                
+                                if link_el and "href" in link_el.attrs:
+                                    post_url = link_el["href"].split("?")[0]
+                                    if not post_url.startswith("http"):
+                                        post_url = "https://www.linkedin.com" + post_url
+                                else:
+                                    post_urn = card.get("data-urn") or card.get("data-id") or ""
+                                    if "activity:" in post_urn:
+                                        act_id = post_urn.split("activity:")[-1].split("]")[0].split('"')[0]
+                                        post_url = f"https://www.linkedin.com/feed/update/urn:li:activity:{act_id}/"
+                                    else:
+                                        post_url = f"https://www.linkedin.com/search/results/content/?keywords={kw_encoded}"
+
+                                if post_url in seen_urls:
+                                    continue
+                                seen_urls.add(post_url)
+
+                                email_match = re.search(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", post_text)
+                                extracted_email = email_match.group(1) if email_match else None
+
+                                first_line = post_text.split("\n")[0][:100]
+                                inferred_title = clean_job_title(first_line)
+                                if not is_tech_role(inferred_title):
+                                    inferred_title = f"Vaga {kw_clean} (Post por {author})"
+
+                                if exclude_senior and (is_senior_title(inferred_title) or is_senior_title(first_line)):
+                                    logger.info(f"Skipping Senior LinkedIn post: '{inferred_title}'")
+                                    continue
+
+                                work_mode = "Remote" if ("remoto" in post_text.lower() or "remote" in post_text.lower() or "home office" in post_text.lower()) else ("Hybrid" if ("hibrid" in post_text.lower() or "híbrid" in post_text.lower()) else "On-site")
+                                desc = f"Publicação recente ({stage}) por {author} ({headline}):\n\n{post_text}"
+
+                                jobs_scraped.append({
+                                    "title": inferred_title,
+                                    "company": author,
+                                    "url": post_url,
+                                    "description": desc,
+                                    "location": "Brasil",
+                                    "work_mode": work_mode,
+                                    "salary": "A combinar",
+                                    "recipient_email": extracted_email,
+                                    "source": "linkedin_post"
+                                })
+                        except Exception as q_err:
+                            logger.debug(f"Error querying LinkedIn posts stage {stage}: {q_err}")
             except Exception as e:
                 logger.error(f"Error scraping LinkedIn posts: {e}")
             finally:
