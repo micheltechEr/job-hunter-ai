@@ -186,9 +186,18 @@ class ScraperService:
         jobs_scraped = []
         kw_encoded = urllib.parse.quote(keyword)
         loc_clean = location.strip() if location and location.strip() else "Brasil"
-        loc_encoded = urllib.parse.quote(loc_clean)
-        url = f"https://br.linkedin.com/jobs/search?keywords={kw_encoded}&location={loc_encoded}&geoId=106057199&f_TPR=r604800&position=1&pageNum=0"
-        logger.info(f"Scraping LinkedIn Brasil: {url} (exclude_senior={exclude_senior})")
+        loc_lower = loc_clean.lower()
+        
+        # Determine strict LinkedIn location filtering
+        if loc_lower in ("brasil", "brazil", "todo brasil", "nacional"):
+            url = f"https://br.linkedin.com/jobs/search?keywords={kw_encoded}&location=Brasil&geoId=106057199&f_TPR=r604800&position=1&pageNum=0"
+        elif loc_lower in ("remoto", "remote", "home office", "home-office"):
+            url = f"https://br.linkedin.com/jobs/search?keywords={kw_encoded}&location=Brasil&geoId=106057199&f_WT=2&f_TPR=r604800&position=1&pageNum=0"
+        else:
+            loc_encoded = urllib.parse.quote(loc_clean)
+            url = f"https://br.linkedin.com/jobs/search?keywords={kw_encoded}&location={loc_encoded}&f_TPR=r604800&position=1&pageNum=0"
+
+        logger.info(f"Scraping LinkedIn Jobs ({loc_clean}): {url} (exclude_senior={exclude_senior})")
 
         from app.services.linkedin_auth import get_linkedin_storage_state_path
         state_file = get_linkedin_storage_state_path()
@@ -299,22 +308,37 @@ class ScraperService:
         return jobs_scraped
 
     # ---------------- LinkedIn Posts / Feed Scraper ----------------
-    async def scrape_linkedin_posts(self, keyword: str, limit: int = 5, exclude_senior: bool = False, date_filter: str = "past-week") -> List[Dict]:
-        """Scrapes hiring posts from LinkedIn content feed prioritizing past 24h to 1 week."""
-        return await _run_in_proactor_thread(self._scrape_linkedin_posts_impl, keyword, limit, exclude_senior, date_filter)
+    async def scrape_linkedin_posts(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False, date_filter: str = "past-week") -> List[Dict]:
+        """Scrapes hiring posts from LinkedIn content feed prioritizing past 24h to 1 week with location context."""
+        return await _run_in_proactor_thread(self._scrape_linkedin_posts_impl, keyword, location, limit, exclude_senior, date_filter)
 
-    async def _scrape_linkedin_posts_impl(self, keyword: str, limit: int, exclude_senior: bool = False, date_filter: str = "past-week") -> List[Dict]:
+    async def _scrape_linkedin_posts_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False, date_filter: str = "past-week") -> List[Dict]:
         jobs_scraped = []
         seen_urls = set()
         
         kw_clean = keyword.strip().strip('"')
+        loc_clean = location.strip() if location and location.strip() else "Brasil"
+        loc_lower = loc_clean.lower()
         
-        # Build search queries prioritizing hiring keywords
-        queries_to_try = [
-            f'vaga {kw_clean}',
-            f'"{kw_clean}" (contratando OR vaga OR "estamos contratando" OR "envie seu cv" OR "mande seu cv")',
-            f'{kw_clean} (contratando OR oportunidade OR "vaga aberta" OR "compartilhem")'
-        ]
+        # Build search queries prioritizing hiring keywords and location
+        if loc_lower in ("brasil", "brazil", "todo brasil", "nacional"):
+            queries_to_try = [
+                f'vaga {kw_clean}',
+                f'"{kw_clean}" (contratando OR vaga OR "estamos contratando" OR "envie seu cv" OR "mande seu cv")',
+                f'{kw_clean} (contratando OR oportunidade OR "vaga aberta" OR "compartilhem")'
+            ]
+        elif loc_lower in ("remoto", "remote", "home office", "home-office"):
+            queries_to_try = [
+                f'vaga {kw_clean} (remoto OR "home office")',
+                f'"{kw_clean}" (remoto OR "home office") (contratando OR vaga)',
+                f'{kw_clean} ("100% remoto" OR "home office") ("estamos contratando" OR oportunidade)'
+            ]
+        else:
+            queries_to_try = [
+                f'vaga {kw_clean} "{loc_clean}"',
+                f'"{kw_clean}" ("{loc_clean}" OR remoto) (contratando OR vaga)',
+                f'{kw_clean} "{loc_clean}" (contratando OR oportunidade OR "vaga aberta")'
+            ]
 
         from app.services.linkedin_auth import get_linkedin_storage_state_path
         state_file = get_linkedin_storage_state_path()
@@ -505,13 +529,16 @@ class ScraperService:
                 await browser.close()
         return jobs_scraped
 
-    async def scrape_programathor_jobs(self, keyword: str, limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+    async def scrape_programathor_jobs(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         """Scrapes jobs from Programathor (Brazilian Tech Job Board) using Playwright via background proactor thread."""
-        return await _run_in_proactor_thread(self._scrape_programathor_impl, keyword, limit, exclude_senior)
+        return await _run_in_proactor_thread(self._scrape_programathor_impl, keyword, location, limit, exclude_senior)
 
-    async def _scrape_programathor_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
+    async def _scrape_programathor_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        kw_encoded = urllib.parse.quote(keyword)
+        loc_clean = location.strip() if location and location.strip() else "Brasil"
+        loc_lower = loc_clean.lower()
+        search_kw = keyword if loc_lower in ("brasil", "brazil", "todo brasil", "nacional") else f"{keyword} {loc_clean}"
+        kw_encoded = urllib.parse.quote(search_kw)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -551,10 +578,10 @@ class ScraperService:
                         
                         spans = [s.get_text(strip=True) for s in card.select(".cell-list-content-icon span")]
                         company = spans[0] if len(spans) > 0 else "Empresa Confidencial"
-                        location = spans[1] if len(spans) > 1 else "Brasil"
+                        job_loc = spans[1] if len(spans) > 1 else loc_clean
+                        work_mode = "Remote" if "remoto" in job_loc.lower() else "On-site"
                         
-                        desc = f"Vaga de {title} na empresa {company}. Localização: {location}."
-                        work_mode = "Remote" if "remoto" in location.lower() or "remote" in location.lower() else "Hybrid" if "hibrid" in location.lower() or "híbrid" in location.lower() else "On-site"
+                        desc = f"Vaga de {title} na empresa {company}. Localização: {job_loc}."
                         salary = "N/A"
 
                         jobs_scraped.append({
@@ -562,7 +589,7 @@ class ScraperService:
                             "company": company,
                             "url": job_url,
                             "description": desc,
-                            "location": location,
+                            "location": job_loc,
                             "work_mode": work_mode,
                             "salary": salary
                         })
@@ -572,15 +599,18 @@ class ScraperService:
                 await browser.close()
         return jobs_scraped
 
-    async def scrape_gupy_jobs(self, keyword: str, limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+    async def scrape_gupy_jobs(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         """Scrapes jobs from Gupy Portal search engine using Playwright via background proactor thread."""
-        return await _run_in_proactor_thread(self._scrape_gupy_impl, keyword, limit, exclude_senior)
+        return await _run_in_proactor_thread(self._scrape_gupy_impl, keyword, location, limit, exclude_senior)
 
-    async def _scrape_gupy_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
+    async def _scrape_gupy_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        kw_encoded = urllib.parse.quote(keyword)
+        loc_clean = location.strip() if location and location.strip() else "Brasil"
+        loc_lower = loc_clean.lower()
+        search_kw = keyword if loc_lower in ("brasil", "brazil", "todo brasil", "nacional") else f"{keyword} {loc_clean}"
+        kw_encoded = urllib.parse.quote(search_kw)
         url = f"https://portal.gupy.io/job-search/term={kw_encoded}"
-        logger.info(f"Scraping Gupy Portal: {url} (exclude_senior={exclude_senior})")
+        logger.info(f"Scraping Gupy Portal ({loc_clean}): {url} (exclude_senior={exclude_senior})")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -742,13 +772,16 @@ class ScraperService:
         return jobs_scraped
 
     # ---------------- InfoJobs Scraper ----------------
-    async def scrape_infojobs_jobs(self, keyword: str, limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+    async def scrape_infojobs_jobs(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         """Scrapes jobs from InfoJobs Brasil using Playwright via background proactor thread."""
-        return await _run_in_proactor_thread(self._scrape_infojobs_impl, keyword, limit, exclude_senior)
+        return await _run_in_proactor_thread(self._scrape_infojobs_impl, keyword, location, limit, exclude_senior)
 
-    async def _scrape_infojobs_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
+    async def _scrape_infojobs_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        kw_encoded = urllib.parse.quote(keyword)
+        loc_clean = location.strip() if location and location.strip() else "Brasil"
+        loc_lower = loc_clean.lower()
+        search_kw = keyword if loc_lower in ("brasil", "brazil", "todo brasil", "nacional") else f"{keyword} {loc_clean}"
+        kw_encoded = urllib.parse.quote(search_kw)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
@@ -818,13 +851,16 @@ class ScraperService:
         return jobs_scraped
 
     # ---------------- Trabalha Brasil Scraper ----------------
-    async def scrape_trabalhabrasil_jobs(self, keyword: str, limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+    async def scrape_trabalhabrasil_jobs(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         """Scrapes jobs from Trabalha Brasil using Playwright via background proactor thread."""
-        return await _run_in_proactor_thread(self._scrape_trabalhabrasil_impl, keyword, limit, exclude_senior)
+        return await _run_in_proactor_thread(self._scrape_trabalhabrasil_impl, keyword, location, limit, exclude_senior)
 
-    async def _scrape_trabalhabrasil_impl(self, keyword: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
+    async def _scrape_trabalhabrasil_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        kw_encoded = urllib.parse.quote(keyword)
+        loc_clean = location.strip() if location and location.strip() else "Brasil"
+        loc_lower = loc_clean.lower()
+        search_kw = keyword if loc_lower in ("brasil", "brazil", "todo brasil", "nacional") else f"{keyword} {loc_clean}"
+        kw_encoded = urllib.parse.quote(search_kw)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])

@@ -139,16 +139,29 @@
                 </div>
 
                 <!-- Localização, Senioridade e Limite -->
-                <div class="grid grid-cols-3 gap-2">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <div>
-                        <label for="scrape-location-input" class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Localização</label>
+                        <div class="flex items-center justify-between mb-1">
+                            <label for="scrape-location-input" class="block text-[11px] font-bold uppercase text-gray-600">Cidade / Região</label>
+                            <span class="text-[10px] text-gray-400">Filtrar área</span>
+                        </div>
                         <input 
                             type="text" 
                             id="scrape-location-input" 
                             value="Brasil" 
-                            placeholder="Ex: Brasil, SP..." 
+                            placeholder="Ex: Salvador, BA | São Paulo, SP | Remoto..." 
                             class="w-full border border-gray-300 rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
                         >
+                        <div class="flex flex-wrap gap-1 mt-1.5" id="scrape-location-presets">
+                            <button type="button" onclick="setScrapeLocation('Brasil')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">🌐 Brasil</button>
+                            <button type="button" onclick="setScrapeLocation('Remoto')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">🏠 Remoto</button>
+                            <button type="button" onclick="setScrapeLocation('Salvador, BA')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">📍 Salvador</button>
+                            <button type="button" onclick="setScrapeLocation('São Paulo, SP')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">📍 SP</button>
+                            <button type="button" onclick="setScrapeLocation('Rio de Janeiro, RJ')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">📍 RJ</button>
+                            <button type="button" onclick="setScrapeLocation('Belo Horizonte, MG')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">📍 BH</button>
+                            <button type="button" onclick="setScrapeLocation('Curitiba, PR')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">📍 Curitiba</button>
+                            <button type="button" onclick="setScrapeLocation('Florianópolis, SC')" class="text-[10px] bg-gray-100 hover:bg-indigo-50 hover:text-indigo-700 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 transition">📍 Floripa</button>
+                        </div>
                     </div>
                     <div>
                         <label for="scrape-seniority-select" class="block text-[11px] font-bold uppercase text-gray-600 mb-1">Senioridade</label>
@@ -521,6 +534,14 @@
             const input = document.getElementById('scrape-role-input');
             if (input) {
                 input.value = roleName;
+                input.focus();
+            }
+        }
+
+        function setScrapeLocation(locName) {
+            const input = document.getElementById('scrape-location-input');
+            if (input) {
+                input.value = locName;
                 input.focus();
             }
         }

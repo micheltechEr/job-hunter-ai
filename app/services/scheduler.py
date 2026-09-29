@@ -110,7 +110,7 @@ async def run_job_hunting_scrape(
                 # LinkedIn Posts / Feed
                 if "linkedin_posts" in chosen_platforms:
                     try:
-                        li_posts = await scraper_service.scrape_linkedin_posts(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        li_posts = await scraper_service.scrape_linkedin_posts(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
                         if li_posts:
                             await scraper_service.ingest_new_jobs(db, li_posts, exclude_senior=should_exclude_senior)
                             total_ingested += len(li_posts)
@@ -120,7 +120,7 @@ async def run_job_hunting_scrape(
                 # Programathor
                 if "programathor" in chosen_platforms:
                     try:
-                        pt_list = await scraper_service.scrape_programathor_jobs(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        pt_list = await scraper_service.scrape_programathor_jobs(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
                         if pt_list:
                             await scraper_service.ingest_new_jobs(db, pt_list, exclude_senior=should_exclude_senior)
                             total_ingested += len(pt_list)
@@ -130,7 +130,7 @@ async def run_job_hunting_scrape(
                 # Gupy Portal
                 if "gupy" in chosen_platforms:
                     try:
-                        gp_list = await scraper_service.scrape_gupy_jobs(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        gp_list = await scraper_service.scrape_gupy_jobs(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
                         if gp_list:
                             await scraper_service.ingest_new_jobs(db, gp_list, exclude_senior=should_exclude_senior)
                             total_ingested += len(gp_list)
@@ -147,10 +147,10 @@ async def run_job_hunting_scrape(
                     except Exception as ind_err:
                         logger.error(f"Error scraping Indeed for '{role}': {ind_err}")
 
-                # InfoJobs Brasil
+                # InfoJobs
                 if "infojobs" in chosen_platforms:
                     try:
-                        ij_list = await scraper_service.scrape_infojobs_jobs(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        ij_list = await scraper_service.scrape_infojobs_jobs(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
                         if ij_list:
                             await scraper_service.ingest_new_jobs(db, ij_list, exclude_senior=should_exclude_senior)
                             total_ingested += len(ij_list)
@@ -160,7 +160,7 @@ async def run_job_hunting_scrape(
                 # Trabalha Brasil
                 if "trabalhabrasil" in chosen_platforms:
                     try:
-                        tb_list = await scraper_service.scrape_trabalhabrasil_jobs(keyword=role, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        tb_list = await scraper_service.scrape_trabalhabrasil_jobs(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
                         if tb_list:
                             await scraper_service.ingest_new_jobs(db, tb_list, exclude_senior=should_exclude_senior)
                             total_ingested += len(tb_list)
