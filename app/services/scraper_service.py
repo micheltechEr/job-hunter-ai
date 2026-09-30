@@ -137,6 +137,53 @@ def get_infojobs_poblacion_id(location_query: str) -> str:
     return ""
 
 
+EXPIRED_OR_CLOSED_PATTERNS = [
+    r"\bvencid[ao]s?\b",
+    r"\bencerrad[ao]s?\b",
+    r"\bfinalizad[ao]s?\b",
+    r"\bexpirad[ao]s?\b",
+    r"\bpausad[ao]s?\b",
+    r"\bfechad[ao]s?\b",
+    r"\bprocesso\s+(?:seletivo\s+)?encerrado\b",
+    r"\binscri[cç][oõ]es\s+encerradas\b",
+    r"\bn[aã]o\s+est[aá]\s+mais\s+aceitando\s+candidaturas\b",
+    r"\bn[aã]o\s+aceita\s+mais\s+candidaturas\b",
+    r"\bvaga\s+fechada\b",
+    r"\bvaga\s+encerrada\b",
+    r"\bvaga\s+vencida\b",
+    r"\bvaga\s+finalizada\b",
+    r"\bno\s+longer\s+accepting\s+applications\b",
+    r"\bjob\s+(?:is\s+)?closed\b",
+    r"\bexpired\b"
+]
+
+
+def is_expired_or_closed_job(title: str, description: str = "", card_text: str = "") -> bool:
+    """
+    Detects if a job listing has expired, closed, or ceased accepting applications.
+    Checks title prefixes/tags, card text badges and description headers.
+    """
+    # 1. Check title first (e.g. 'Vencida Developer...', '[ENCERRADA] Fullstack')
+    if title:
+        t_low = f" {title.lower()} "
+        if any(re.search(pat, t_low, re.IGNORECASE) for pat in EXPIRED_OR_CLOSED_PATTERNS):
+            return True
+
+    # 2. Check card/badge text if available (e.g. tag-expired, status badges)
+    if card_text:
+        c_low = f" {card_text.lower()} "
+        if any(re.search(pat, c_low, re.IGNORECASE) for pat in EXPIRED_OR_CLOSED_PATTERNS):
+            return True
+
+    # 3. Check description header
+    if description:
+        d_head = f" {description[:400].lower()} "
+        if any(re.search(pat, d_head, re.IGNORECASE) for pat in EXPIRED_OR_CLOSED_PATTERNS):
+            return True
+
+    return False
+
+
 NON_TECH_PATTERNS = [
     # General labor / services / maintenance
     r"\bauxiliar\b", r"\bassendente\b", r"\batendente\b", r"\brecepcionista\b", r"\bsecret[aá]ri[ao]\b",
@@ -862,6 +909,11 @@ class ScraperService:
                             continue
                             
                         title = title_el.get_text().strip()
+                        card_raw = card.get_text()
+                        if is_expired_or_closed_job(title, card_text=card_raw):
+                            logger.info(f"Skipping expired/closed Programathor job: '{title}'")
+                            continue
+
                         if not is_role_relevant(title, keyword):
                             logger.info(f"Skipping non-relevant Programathor job: '{title}' (Target was '{keyword}')")
                             continue
@@ -1280,6 +1332,10 @@ class ScraperService:
 
                 if not title or is_unrelated_non_tech_title(title):
                     logger.info(f"Ingestion Non-Tech Gate: blocked non-tech job '{title}'")
+                    continue
+
+                if is_expired_or_closed_job(title, job_dict.get("description", "")):
+                    logger.info(f"Ingestion Expiration Gate: blocked expired/closed job '{title}'")
                     continue
 
                 if exclude_senior and is_senior_title(title):

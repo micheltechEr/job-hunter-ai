@@ -195,6 +195,23 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
         fp2 = compute_job_fingerprint("Desenvolvedor Fullstack Jr.", "Vagas MRM Brasil")
         self.assertEqual(fp1, fp2)
 
+    def test_expired_or_closed_job_detection(self):
+        from app.services.scraper_service import is_expired_or_closed_job
+
+        # 1. Title with expiration markers
+        self.assertTrue(is_expired_or_closed_job("Vencida Developer Back-End Senior - Node.Js"))
+        self.assertTrue(is_expired_or_closed_job("[ENCERRADA] Desenvolvedor Full Stack"))
+        self.assertTrue(is_expired_or_closed_job("Vaga Finalizada - Engenheiro de Software"))
+        self.assertTrue(is_expired_or_closed_job("Desenvolvedor Java - Inscrições Encerradas"))
+
+        # 2. Card text with expiration badges
+        self.assertTrue(is_expired_or_closed_job("Desenvolvedor React", card_text="Vaga vencida há 2 dias"))
+        self.assertTrue(is_expired_or_closed_job("Desenvolvedor Node", card_text="Processo seletivo encerrado"))
+
+        # 3. Active valid job
+        self.assertFalse(is_expired_or_closed_job("Desenvolvedor Full Stack Júnior", description="Vaga aberta para atuação remota."))
+        self.assertFalse(is_expired_or_closed_job("Analista de Sistemas Pleno", description="Venha fazer parte do nosso time."))
+
 
 if __name__ == "__main__":
     unittest.main()
