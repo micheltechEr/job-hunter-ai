@@ -192,7 +192,31 @@ def is_role_relevant(title: str, target_keyword: str = "") -> bool:
 
     # 3. Domain & Specialization Alignment based on target_keyword
     if kw_norm:
-        # A. Target is BACKEND
+        # A. Target is DATA / ANALYTICS
+        if any(dk in kw_norm for dk in ["dado", "dados", "data", "analytics", "bi", "power bi", "sql"]):
+            return any(re.search(r'\b' + re.escape(dk) + r'\b', t_clean) for dk in DATA_KEYWORDS)
+
+        # B. Target is QA / TESTING
+        if any(qak in kw_norm for qak in ["qa", "tester", "quality assurance", "testes"]):
+            return any(re.search(r'\b' + re.escape(qak) + r'\b', t_clean) for qak in ["qa", "quality assurance", "tester", "testes", "automação de testes"])
+
+        # C. Target is DEVOPS / CLOUD
+        if any(dvk in kw_norm for dvk in ["devops", "cloud", "sre", "infraestrutura"]):
+            return any(re.search(r'\b' + re.escape(dvk) + r'\b', t_clean) for dvk in ["devops", "cloud", "sre", "infraestrutura", "kubernetes", "aws", "azure", "gcp"])
+
+        # D. Target is ANALYST / IT / SUPPORT / SYSTEMS / INFRA
+        if any(ak in kw_norm for ak in ["suporte", "helpdesk", "service desk", "infra", "sistemas", "ti", "it analyst", "it support", "técnico de ti", "analista de ti", "analista de suporte", "analista de infra"]) or ("analista" in kw_norm and not any(dk in kw_norm for dk in ["desenvolvedor", "developer", "programador", "software"])):
+            is_it_analyst = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
+                "analista", "suporte", "ti", "it", "sistemas", "infraestrutura", "redes", "helpdesk", "service desk", "banco de dados", "dba", "segurança", "infra"
+            ])
+            is_pure_dev = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
+                "desenvolvedor", "desenvolvedora", "developer", "dev", "programador", "software engineer", "full stack", "fullstack"
+            ]) and not any(k in t_clean for k in ["analista de sistemas", "analista de ti", "analista de suporte", "analista desenvolvedor"])
+            if is_pure_dev or not is_it_analyst:
+                return False
+            return True
+
+        # E. Target is BACKEND
         if any(bk in kw_norm for bk in ["backend", "back-end", "back end"]):
             is_backend = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
                 "backend", "back-end", "back end", "fullstack", "full-stack", "full stack",
@@ -204,7 +228,7 @@ def is_role_relevant(title: str, target_keyword: str = "") -> bool:
                 return False
             return True
 
-        # B. Target is FRONTEND
+        # F. Target is FRONTEND
         if any(fk in kw_norm for fk in ["frontend", "front-end", "front end"]):
             is_frontend = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
                 "frontend", "front-end", "front end", "fullstack", "full-stack", "full stack",
@@ -215,33 +239,25 @@ def is_role_relevant(title: str, target_keyword: str = "") -> bool:
                 return False
             return True
 
-        # C. Target is FULLSTACK
+        # G. Target is FULLSTACK
         if any(fsk in kw_norm for fsk in ["fullstack", "full-stack", "full stack"]):
             return any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
                 "fullstack", "full-stack", "full stack", "desenvolvedor", "developer", "programador",
                 "software", "web", "react", "node", "python", "php", "javascript", "typescript"
             ])
 
-        # D. Target is DATA / ANALYTICS
-        if any(dk in kw_norm for dk in ["dado", "dados", "data", "analytics", "bi", "power bi", "sql"]):
-            return any(re.search(r'\b' + re.escape(dk) + r'\b', t_clean) for dk in DATA_KEYWORDS)
-
-        # E. Target is QA / TESTING
-        if any(qak in kw_norm for qak in ["qa", "tester", "quality assurance", "testes"]):
-            return any(re.search(r'\b' + re.escape(qak) + r'\b', t_clean) for qak in ["qa", "quality assurance", "tester", "testes", "automação de testes"])
-
-        # F. Target is DEVOPS / CLOUD
-        if any(dvk in kw_norm for dvk in ["devops", "cloud", "sre", "infraestrutura"]):
-            return any(re.search(r'\b' + re.escape(dvk) + r'\b', t_clean) for dvk in ["devops", "cloud", "sre", "infraestrutura", "kubernetes", "aws", "azure", "gcp"])
-
-        # G. Target is SPECIFIC LANGUAGE/TECH (Python, React, Node, PHP, Java, etc.)
+        # H. Target is SPECIFIC LANGUAGE/TECH (Python, React, Node, PHP, Java, etc.)
         target_tokens = [w for w in re.split(r'[\s,;/]+', kw_norm) if len(w) > 2 and w not in ("desenvolvedor", "developer", "dev", "programador", "vaga", "junior", "pleno", "senior", "jr", "sr")]
         if target_tokens:
             has_token_match = any(re.search(r'\b' + re.escape(tk) + r'\b', t_clean) for tk in target_tokens)
             if has_token_match:
                 return True
+            return False
 
-    # Fallback: check if title contains any known tech keyword
+        # If keyword was provided but did not match specialized rules above, strictly reject
+        return False
+
+    # Fallback when NO target keyword was provided: check if title contains any known tech keyword
     has_tech_kw = any(re.search(r'\b' + re.escape(tk) + r'\b', t_clean) for tk in CORE_TECH_KEYWORDS)
     if not has_tech_kw:
         has_tech_kw = any(tk in t_clean for tk in [
@@ -781,10 +797,8 @@ class ScraperService:
 
     async def _scrape_programathor_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        loc_clean = location.strip() if location and location.strip() else "Brasil"
-        loc_lower = loc_clean.lower()
-        search_kw = keyword if loc_lower in ("brasil", "brazil", "todo brasil", "nacional") else f"{keyword} {loc_clean}"
-        kw_encoded = urllib.parse.quote(search_kw)
+        loc_info = parse_location(location)
+        kw_encoded = urllib.parse.quote(keyword.strip())
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -797,7 +811,7 @@ class ScraperService:
                         break
 
                     url = f"https://programathor.com.br/jobs?text={kw_encoded}&page={page_num}" if page_num > 1 else f"https://programathor.com.br/jobs?text={kw_encoded}"
-                    logger.info(f"Scraping Programathor (p.{page_num}): {url} (exclude_senior={exclude_senior})")
+                    logger.info(f"Scraping Programathor (p.{page_num}): {url} (location='{loc_info['clean_loc']}', exclude_senior={exclude_senior})")
                     await page.goto(url, timeout=30000, wait_until="domcontentloaded")
                     html = await page.content()
                     soup = BeautifulSoup(html, "html.parser")
