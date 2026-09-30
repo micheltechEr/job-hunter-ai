@@ -140,3 +140,33 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_role_relevant("Python Developer", "Desenvolvedor Full Stack"))
         self.assertFalse(is_role_relevant("Analista de RM", "Desenvolvedor Full Stack"))
         self.assertFalse(is_role_relevant("Analista de Operações", "Desenvolvedor Full Stack"))
+
+    def test_parse_location_clean_separation(self):
+        from app.services.scraper_service import parse_location
+
+        # 1. City without state
+        loc_fsa = parse_location("Feira de Santana")
+        self.assertFalse(loc_fsa["is_national"])
+        self.assertEqual(loc_fsa["city"], "Feira de Santana")
+        self.assertEqual(loc_fsa["clean_loc"], "Feira de Santana")
+        self.assertEqual(loc_fsa["slug"], "feira-de-santana")
+
+        # 2. City with state abbreviation
+        loc_fsa_ba = parse_location("Feira de Santana, BA")
+        self.assertFalse(loc_fsa_ba["is_national"])
+        self.assertEqual(loc_fsa_ba["city"], "Feira de Santana")
+        self.assertEqual(loc_fsa_ba["state"], "BA")
+        self.assertEqual(loc_fsa_ba["clean_loc"], "Feira de Santana, BA")
+
+        # 3. National / Remote defaults
+        loc_br = parse_location("Brasil")
+        self.assertTrue(loc_br["is_national"])
+        self.assertEqual(loc_br["clean_loc"], "Brasil")
+
+        loc_none = parse_location("Não informado")
+        self.assertTrue(loc_none["is_national"])
+        self.assertEqual(loc_none["clean_loc"], "Brasil")
+
+
+if __name__ == "__main__":
+    unittest.main()

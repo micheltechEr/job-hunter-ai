@@ -4,6 +4,7 @@ import logging
 import urllib.parse
 from typing import List, Dict, Callable, Any, Optional
 import re
+import unicodedata
 
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
@@ -14,6 +15,34 @@ from app.models.db_models import Job, Application
 from app.schemas.schemas import JobCreate
 
 logger = logging.getLogger("job_hunter.scraper_service")
+
+
+def slugify(text: str) -> str:
+    """Converts a text to a URL-safe slug."""
+    if not text:
+        return ""
+    text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+    text = re.sub(r'[^\w\s-]', '', text.lower())
+    return re.sub(r'[-\s]+', '-', text).strip('-')
+
+
+def parse_location(location: str) -> Dict[str, Any]:
+    """
+    Parses and cleanly separates location into city, state, clean location string and slug.
+    Guarantees that location is never concatenated into keyword fields.
+    """
+    if not location or location.strip().lower() in (
+        'brasil', 'brazil', 'todo brasil', 'nacional', 'não informado', 'nao informado', 'n/a', 'none', 'unknown', ''
+    ):
+        return {'is_national': True, 'city': '', 'state': '', 'clean_loc': 'Brasil', 'slug': ''}
+
+    loc = location.strip()
+    m = re.match(r'^([^,-]+)[,-]\s*([A-Za-z]{2})$', loc)
+    if m:
+        city = m.group(1).strip()
+        state = m.group(2).strip().upper()
+        return {'is_national': False, 'city': city, 'state': state, 'clean_loc': f'{city}, {state}', 'slug': slugify(f'{city}-{state}')}
+    return {'is_national': False, 'city': loc, 'state': '', 'clean_loc': loc, 'slug': slugify(loc)}
 
 
 NON_TECH_PATTERNS = [
@@ -736,12 +765,14 @@ class ScraperService:
 
     async def _scrape_gupy_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        loc_clean = location.strip() if location and location.strip() else "Brasil"
-        loc_lower = loc_clean.lower()
-        search_kw = keyword if loc_lower in ("brasil", "brazil", "todo brasil", "nacional") else f"{keyword} {loc_clean}"
-        kw_encoded = urllib.parse.quote(search_kw)
-        url = f"https://portal.gupy.io/job-search/term={kw_encoded}"
-        logger.info(f"Scraping Gupy Portal ({loc_clean}): {url} (exclude_senior={exclude_senior})")
+        loc_info = parse_location(location)
+        kw_encoded = urllib.parse.quote(keyword.strip())
+
+        # Clean Gupy URL
+        city_param = f"&city={urllib.parse.quote(loc_info['city'])}" if loc_info['city'] else ""
+        state_param = f"&state={loc_info['state']}" if loc_info['state'] else ""
+        url = f"https://portal.gupy.io/job-search/term={kw_encoded}{city_param}{state_param}"
+        logger.info(f"Scraping Gupy Portal: {url} (location='{loc_info['clean_loc']}', exclude_senior={exclude_senior})")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -836,8 +867,9 @@ class ScraperService:
 
     async def _scrape_indeed_impl(self, keyword: str, location: str, limit: int, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        kw_encoded = urllib.parse.quote(keyword)
-        loc_encoded = urllib.parse.quote(location)
+        loc_info = parse_location(location)
+        kw_encoded = urllib.parse.quote(keyword.strip())
+        l_param = f"&l={urllib.parse.quote(loc_info['clean_loc'])}" if not loc_info['is_national'] else ""
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
@@ -850,8 +882,8 @@ class ScraperService:
                         break
 
                     start_param = f"&start={page_idx * 10}" if page_idx > 0 else ""
-                    url = f"https://br.indeed.com/jobs?q={kw_encoded}&l={loc_encoded}{start_param}"
-                    logger.info(f"Scraping Indeed (p.{page_idx+1}): {url} (exclude_senior={exclude_senior})")
+                    url = f"https://br.indeed.com/jobs?q={kw_encoded}{l_param}{start_param}"
+                    logger.info(f"Scraping Indeed (p.{page_idx+1}): {url} (location='{loc_info['clean_loc']}', exclude_senior={exclude_senior})")
                     await page.goto(url, timeout=30000, wait_until="domcontentloaded")
                     html = await page.content()
                     soup = BeautifulSoup(html, "html.parser")
@@ -925,10 +957,11 @@ class ScraperService:
 
     async def _scrape_infojobs_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
         jobs_scraped = []
-        loc_clean = location.strip() if location and location.strip() else "Brasil"
-        loc_lower = loc_clean.lower()
-        search_kw = keyword if loc_lower in ("brasil", "brazil", "todo brasil", "nacional") else f"{keyword} {loc_clean}"
-        kw_encoded = urllib.parse.quote(search_kw)
+        loc_info = parse_location(location)
+        kw_encoded = urllib.parse.quote(keyword.strip())
+
+        # Cleanly separate keyword and location parameters for InfoJobs
+        loc_param = f"&campo-cidade={urllib.parse.quote(loc_info['clean_loc'])}" if not loc_info['is_national'] else ""
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
@@ -940,8 +973,9 @@ class ScraperService:
                     if len(jobs_scraped) >= limit:
                         break
 
-                    url = f"https://www.infojobs.com.br/empregos.aspx?palabra={kw_encoded}&page={page_num}" if page_num > 1 else f"https://www.infojobs.com.br/empregos.aspx?palabra={kw_encoded}"
-                    logger.info(f"Scraping InfoJobs (p.{page_num}): {url} (exclude_senior={exclude_senior})")
+                    page_param = f"&page={page_num}" if page_num > 1 else ""
+                    url = f"https://www.infojobs.com.br/empregos.aspx?palabra={kw_encoded}{loc_param}{page_param}"
+                    logger.info(f"Scraping InfoJobs (p.{page_num}): {url} (location='{loc_info['clean_loc']}', exclude_senior={exclude_senior})")
                     await page.goto(url, timeout=30000, wait_until="domcontentloaded")
                     html = await page.content()
                     soup = BeautifulSoup(html, "html.parser")
