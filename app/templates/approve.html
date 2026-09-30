@@ -536,6 +536,11 @@
                 input.value = roleName;
                 input.focus();
             }
+            const searchInput = document.getElementById('job-search-input');
+            if (searchInput) {
+                searchInput.value = roleName;
+                renderFilteredJobs();
+            }
         }
 
         function setScrapeLocation(locName) {
@@ -648,6 +653,13 @@
                         <p class="text-[10px] text-emerald-600 italic">As novas vagas e o cálculo ATS aparecerão automaticamente no painel em instantes...</p>
                     `;
                     banner.classList.remove('hidden');
+
+                    // Filter live view to only display jobs matching requested role
+                    const searchInput = document.getElementById('job-search-input');
+                    if (searchInput) {
+                        searchInput.value = roleVal;
+                        renderFilteredJobs();
+                    }
 
                     if (saveProfile) {
                         loadProfileRoles();

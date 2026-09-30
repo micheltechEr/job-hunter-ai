@@ -190,24 +190,58 @@ def is_role_relevant(title: str, target_keyword: str = "") -> bool:
     if is_unrelated_non_tech_title(title):
         return False
 
-    # 3. Domain-Specific Alignment based on target_keyword
-    # A. Target is DATA / ANALYTICS
-    if any(dk in kw_norm for dk in ["dado", "dados", "data", "analytics", "bi", "power bi", "sql"]):
-        return any(re.search(r'\b' + re.escape(dk) + r'\b', t_clean) for dk in DATA_KEYWORDS)
+    # 3. Domain & Specialization Alignment based on target_keyword
+    if kw_norm:
+        # A. Target is BACKEND
+        if any(bk in kw_norm for bk in ["backend", "back-end", "back end"]):
+            is_backend = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
+                "backend", "back-end", "back end", "fullstack", "full-stack", "full stack",
+                "python", "node", "nodejs", "node.js", "java", "php", "laravel", "c#", ".net", "dotnet", "golang", "go", "ruby", "rust"
+            ])
+            is_pure_frontend = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in ["frontend", "front-end", "front end", "ui/ux", "designer"]) and not any(k in t_clean for k in ["backend", "fullstack", "full stack"])
+            is_pure_mobile = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in ["flutter", "react native", "ios", "android"]) and not any(k in t_clean for k in ["backend", "fullstack", "full stack"])
+            if is_pure_frontend or is_pure_mobile or not is_backend:
+                return False
+            return True
 
-    # B. Target is SOFTWARE / DEV
-    if any(devk in kw_norm for devk in ["desenvolvedor", "developer", "dev", "programador", "software", "full stack", "fullstack", "frontend", "backend", "python", "react", "node", "java", "php", "mobile"]):
-        return any(re.search(r'\b' + re.escape(devk) + r'\b', t_clean) for devk in DEV_KEYWORDS)
+        # B. Target is FRONTEND
+        if any(fk in kw_norm for fk in ["frontend", "front-end", "front end"]):
+            is_frontend = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
+                "frontend", "front-end", "front end", "fullstack", "full-stack", "full stack",
+                "react", "vue", "angular", "javascript", "typescript", "web", "html", "css"
+            ])
+            is_pure_backend = any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in ["backend", "back-end", "dba", "devops"]) and not any(k in t_clean for k in ["frontend", "fullstack", "full stack"])
+            if is_pure_backend or not is_frontend:
+                return False
+            return True
 
-    # C. Target is QA / TESTING
-    if any(qak in kw_norm for qak in ["qa", "tester", "quality assurance", "testes"]):
-        return any(re.search(r'\b' + re.escape(qak) + r'\b', t_clean) for qak in ["qa", "quality assurance", "tester", "testes", "automação de testes"])
+        # C. Target is FULLSTACK
+        if any(fsk in kw_norm for fsk in ["fullstack", "full-stack", "full stack"]):
+            return any(re.search(r'\b' + re.escape(k) + r'\b', t_clean) for k in [
+                "fullstack", "full-stack", "full stack", "desenvolvedor", "developer", "programador",
+                "software", "web", "react", "node", "python", "php", "javascript", "typescript"
+            ])
 
-    # D. Target is DEVOPS / CLOUD
-    if any(dvk in kw_norm for dvk in ["devops", "cloud", "sre", "infraestrutura"]):
-        return any(re.search(r'\b' + re.escape(dvk) + r'\b', t_clean) for dvk in ["devops", "cloud", "sre", "infraestrutura", "kubernetes", "aws", "azure", "gcp"])
+        # D. Target is DATA / ANALYTICS
+        if any(dk in kw_norm for dk in ["dado", "dados", "data", "analytics", "bi", "power bi", "sql"]):
+            return any(re.search(r'\b' + re.escape(dk) + r'\b', t_clean) for dk in DATA_KEYWORDS)
 
-    # Default fallback: check if title contains any known tech/data keyword
+        # E. Target is QA / TESTING
+        if any(qak in kw_norm for qak in ["qa", "tester", "quality assurance", "testes"]):
+            return any(re.search(r'\b' + re.escape(qak) + r'\b', t_clean) for qak in ["qa", "quality assurance", "tester", "testes", "automação de testes"])
+
+        # F. Target is DEVOPS / CLOUD
+        if any(dvk in kw_norm for dvk in ["devops", "cloud", "sre", "infraestrutura"]):
+            return any(re.search(r'\b' + re.escape(dvk) + r'\b', t_clean) for dvk in ["devops", "cloud", "sre", "infraestrutura", "kubernetes", "aws", "azure", "gcp"])
+
+        # G. Target is SPECIFIC LANGUAGE/TECH (Python, React, Node, PHP, Java, etc.)
+        target_tokens = [w for w in re.split(r'[\s,;/]+', kw_norm) if len(w) > 2 and w not in ("desenvolvedor", "developer", "dev", "programador", "vaga", "junior", "pleno", "senior", "jr", "sr")]
+        if target_tokens:
+            has_token_match = any(re.search(r'\b' + re.escape(tk) + r'\b', t_clean) for tk in target_tokens)
+            if has_token_match:
+                return True
+
+    # Fallback: check if title contains any known tech keyword
     has_tech_kw = any(re.search(r'\b' + re.escape(tk) + r'\b', t_clean) for tk in CORE_TECH_KEYWORDS)
     if not has_tech_kw:
         has_tech_kw = any(tk in t_clean for tk in [
