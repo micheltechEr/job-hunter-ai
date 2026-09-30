@@ -181,6 +181,20 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
         # 3. Empty returns empty
         self.assertEqual(get_infojobs_poblacion_id(""), "")
 
+    def test_job_deduplication_helpers(self):
+        from app.services.scraper_service import canonicalize_job_url, compute_job_fingerprint
+
+        # 1. URL Canonicalization strips tracking params
+        u1 = "https://www.linkedin.com/jobs/view/4123456789?position=1&pageNum=0&refId=abc&utm_source=share"
+        u2 = "https://www.linkedin.com/jobs/view/4123456789?position=2&pageNum=1"
+        self.assertEqual(canonicalize_job_url(u1), "https://www.linkedin.com/jobs/view/4123456789")
+        self.assertEqual(canonicalize_job_url(u1), canonicalize_job_url(u2))
+
+        # 2. Title + Company fingerprinting
+        fp1 = compute_job_fingerprint("Desenvolvedor Fullstack Jr", "Vagas MRM Brasil")
+        fp2 = compute_job_fingerprint("Desenvolvedor Fullstack Jr.", "Vagas MRM Brasil")
+        self.assertEqual(fp1, fp2)
+
 
 if __name__ == "__main__":
     unittest.main()

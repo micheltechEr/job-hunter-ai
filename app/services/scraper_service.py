@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from app.config import settings
 from app.models.db_models import Job, Application
 from app.schemas.schemas import JobCreate
@@ -24,6 +25,37 @@ def slugify(text: str) -> str:
     text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
     text = re.sub(r'[^\w\s-]', '', text.lower())
     return re.sub(r'[-\s]+', '-', text).strip('-')
+
+
+def canonicalize_job_url(url: str) -> str:
+    """
+    Strips tracking query parameters (utm, ref, position, pageNum, etc.) and trailing slashes to prevent duplicate ingestion.
+    """
+    if not url or url.startswith('javascript:'):
+        return ""
+    try:
+        p = urllib.parse.urlparse(url.strip())
+        clean_params = []
+        if p.query:
+            for q in p.query.split('&'):
+                if not any(q.lower().startswith(prefix) for prefix in [
+                    'utm_', 'ref', 'position', 'pagenum', 'trackingid', 'trk', 'midtoken', 'start', 'from', 'f_tpr', 'page'
+                ]):
+                    clean_params.append(q)
+        new_query = '&'.join(clean_params)
+        clean_path = p.path.rstrip('/')
+        return urllib.parse.urlunparse((p.scheme, p.netloc, clean_path, '', new_query, ''))
+    except Exception:
+        return url.strip()
+
+
+def compute_job_fingerprint(title: str, company: str) -> str:
+    """Computes a normalized title + company fingerprint for cross-platform deduplication."""
+    t_norm = re.sub(r'[^a-zA-Z0-9]', '', (title or '').lower())
+    c_norm = re.sub(r'[^a-zA-Z0-9]', '', (company or '').lower())
+    if c_norm in ('', 'empresaconfidencial', 'confidencial', 'anonimo', 'anônimo'):
+        return f"title_{t_norm}"
+    return f"{t_norm}___{c_norm}"
 
 
 def parse_location(location: str) -> Dict[str, Any]:
@@ -1232,10 +1264,19 @@ class ScraperService:
 
     async def ingest_new_jobs(self, db: AsyncSession, scraped_jobs: List[Dict], exclude_senior: bool = False):
         """Saves scraped jobs to the database immediately with on-demand ATS evaluation upon user interaction."""
+        seen_batch_urls = set()
+        seen_batch_fps = set()
+
         for job_dict in scraped_jobs:
             try:
                 title = clean_job_title(job_dict.get("title", ""))
+                company = (job_dict.get("company") or "Empresa Confidencial").strip()
+                raw_url = (job_dict.get("url") or "").strip()
+                canon_url = canonicalize_job_url(raw_url)
+
                 job_dict["title"] = title
+                job_dict["company"] = company
+                job_dict["url"] = canon_url or raw_url
 
                 if not title or is_unrelated_non_tech_title(title):
                     logger.info(f"Ingestion Non-Tech Gate: blocked non-tech job '{title}'")
@@ -1245,18 +1286,48 @@ class ScraperService:
                     logger.info(f"Ingestion Seniority Gate: blocked Senior job '{title}'")
                     continue
 
-                # 1. Skip if already processed URL
-                if job_dict.get("url"):
-                    result = await db.execute(select(Job).where(Job.url == job_dict["url"]))
+                # 1. In-batch Deduplication
+                fp = compute_job_fingerprint(title, company)
+                if canon_url and canon_url in seen_batch_urls:
+                    continue
+                if fp in seen_batch_fps:
+                    continue
+
+                # 2. Database URL Deduplication
+                if canon_url:
+                    result = await db.execute(
+                        select(Job).where(
+                            (Job.url == canon_url) | (Job.url == raw_url)
+                        )
+                    )
                     existing = result.scalars().first()
                     if existing:
+                        seen_batch_urls.add(canon_url)
                         continue
-                
-                # 2. Add job record immediately
+
+                # 3. Database Title + Company Deduplication
+                if company.lower() not in ("empresa confidencial", "confidencial", "anonimo", "anônimo", ""):
+                    result_tc = await db.execute(
+                        select(Job).where(
+                            (func.lower(Job.title) == title.lower()) &
+                            (func.lower(Job.company) == company.lower())
+                        )
+                    )
+                    existing_tc = result_tc.scalars().first()
+                    if existing_tc:
+                        seen_batch_fps.add(fp)
+                        if canon_url:
+                            seen_batch_urls.add(canon_url)
+                        continue
+
+                seen_batch_urls.add(canon_url)
+                seen_batch_fps.add(fp)
+
+                # 4. Add job record immediately
                 job = Job(
                     title=title,
-                    company=job_dict["company"],
-                    url=job_dict.get("url"),
+                    company=company,
+                    url=canon_url or raw_url,
                     description=job_dict["description"],
                     location=job_dict.get("location"),
                     work_mode=job_dict.get("work_mode"),
@@ -1265,7 +1336,7 @@ class ScraperService:
                 db.add(job)
                 await db.flush()
 
-                # 3. Initial placeholder application for status tracking (DISCOVERED, on-demand ATS)
+                # 5. Initial placeholder application for status tracking (DISCOVERED, on-demand ATS)
                 init_app = Application(
                     job_id=job.id,
                     recipient_email=job_dict.get("recipient_email"),
