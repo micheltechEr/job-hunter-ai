@@ -167,6 +167,20 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(loc_none["is_national"])
         self.assertEqual(loc_none["clean_loc"], "Brasil")
 
+    def test_infojobs_poblacion_id_resolution(self):
+        from app.services.scraper_service import get_infojobs_poblacion_id
+
+        # 1. Feira de Santana
+        pid_fsa = get_infojobs_poblacion_id("Feira de Santana")
+        self.assertEqual(pid_fsa, "5202596")
+
+        # 2. Salvador
+        pid_ssa = get_infojobs_poblacion_id("Salvador")
+        self.assertEqual(pid_ssa, "5202974")
+
+        # 3. Empty returns empty
+        self.assertEqual(get_infojobs_poblacion_id(""), "")
+
 
 if __name__ == "__main__":
     unittest.main()

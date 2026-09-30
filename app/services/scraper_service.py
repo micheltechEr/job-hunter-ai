@@ -45,6 +45,66 @@ def parse_location(location: str) -> Dict[str, Any]:
     return {'is_national': False, 'city': loc, 'state': '', 'clean_loc': loc, 'slug': slugify(loc)}
 
 
+INFOJOBS_POBLACION_CACHE: Dict[str, str] = {
+    "salvador": "5202974",
+    "feira de santana": "5202596",
+    "sao paulo": "5211323",
+    "são paulo": "5211323",
+    "rio de janeiro": "5208466",
+    "curitiba": "5207873",
+    "belo horizonte": "5200877",
+    "brasilia": "5201886",
+    "brasília": "5201886",
+    "porto alegre": "5208573",
+    "recife": "5207869",
+    "fortaleza": "5202868"
+}
+
+
+def get_infojobs_poblacion_id(location_query: str) -> str:
+    """
+    Resolves location string to official InfoJobs poblacion ID via autocomplete API.
+    Caches results in-memory for instant 0ms subsequent queries.
+    """
+    if not location_query:
+        return ""
+
+    clean_q = location_query.strip().lower()
+    if clean_q in INFOJOBS_POBLACION_CACHE:
+        return INFOJOBS_POBLACION_CACHE[clean_q]
+
+    # Query InfoJobs autocomplete API
+    try:
+        import urllib.request
+        import json
+        q_enc = urllib.parse.quote(location_query.strip())
+        url = f"https://www.infojobs.com.br/mf-publicarea/api/autocompleteapi/locations?query={q_enc}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        })
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                suggestions = data.get("suggestions", [])
+                for s in suggestions:
+                    val = s.get("value", "").lower()
+                    if clean_q in val or val in clean_q:
+                        p_id = s.get("data", {}).get("id", "")
+                        if p_id:
+                            INFOJOBS_POBLACION_CACHE[clean_q] = str(p_id)
+                            return str(p_id)
+                if suggestions:
+                    p_id = suggestions[0].get("data", {}).get("id", "")
+                    if p_id:
+                        INFOJOBS_POBLACION_CACHE[clean_q] = str(p_id)
+                        return str(p_id)
+    except Exception as e:
+        logger.warning(f"Could not resolve InfoJobs poblacion ID for '{location_query}': {e}")
+
+    return ""
+
+
 NON_TECH_PATTERNS = [
     # General labor / services / maintenance
     r"\bauxiliar\b", r"\bassendente\b", r"\batendente\b", r"\brecepcionista\b", r"\bsecret[aá]ri[ao]\b",
@@ -960,8 +1020,12 @@ class ScraperService:
         loc_info = parse_location(location)
         kw_encoded = urllib.parse.quote(keyword.strip())
 
-        # Cleanly separate keyword and location parameters for InfoJobs
-        loc_param = f"&campo-cidade={urllib.parse.quote(loc_info['clean_loc'])}" if not loc_info['is_national'] else ""
+        # Resolve exact poblacion ID from autocomplete API if location is specific
+        poblacion_id = ""
+        if not loc_info['is_national']:
+            poblacion_id = get_infojobs_poblacion_id(loc_info['city'] or loc_info['clean_loc'])
+
+        loc_param = f"&poblacion={poblacion_id}" if poblacion_id else (f"&campo-cidade={urllib.parse.quote(loc_info['clean_loc'])}" if not loc_info['is_national'] else "")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
