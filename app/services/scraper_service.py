@@ -1314,6 +1314,139 @@ class ScraperService:
                 await browser.close()
         return jobs_scraped
 
+    # ---------------- Catho Scraper ----------------
+    async def scrape_catho_jobs(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+        """Scrapes jobs from Catho Brasil using Playwright via background proactor thread."""
+        return await _run_in_proactor_thread(self._scrape_catho_impl, keyword, location, limit, exclude_senior)
+
+    async def _scrape_catho_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+        jobs_scraped = []
+        loc_info = parse_location(location)
+        role_slug = slugify(keyword.strip()) or "vagas"
+
+        # Determine Catho Search URL
+        is_remote = any(w in location.lower() for w in ["remoto", "remote", "home office"]) or loc_info['is_national']
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+            context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            page = await context.new_page()
+            try:
+                max_pages = min(5, max(1, (limit // 15) + 1))
+                for page_num in range(1, max_pages + 1):
+                    if len(jobs_scraped) >= limit:
+                        break
+
+                    page_param = f"&page={page_num}" if page_num > 1 else ""
+
+                    if not loc_info['is_national'] and not is_remote and loc_info['slug']:
+                        url = f"https://www.catho.com.br/vagas/{role_slug}/{loc_info['slug']}/?page={page_num}" if page_num > 1 else f"https://www.catho.com.br/vagas/{role_slug}/{loc_info['slug']}/"
+                    elif is_remote:
+                        url = f"https://www.catho.com.br/vagas/{role_slug}/?work_model%5B0%5D=remote{page_param}"
+                    else:
+                        url = f"https://www.catho.com.br/vagas/{role_slug}/?page={page_num}" if page_num > 1 else f"https://www.catho.com.br/vagas/{role_slug}/"
+
+                    logger.info(f"Scraping Catho (p.{page_num}): {url} (location='{loc_info['clean_loc']}', exclude_senior={exclude_senior})")
+                    try:
+                        await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    except Exception as nav_err:
+                        logger.warning(f"Catho navigation error for {url}: {nav_err}. Falling back to general query...")
+                        kw_enc = urllib.parse.quote(keyword.strip())
+                        url = f"https://www.catho.com.br/vagas/?q={kw_enc}&page={page_num}"
+                        await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+
+                    html = await page.content()
+                    soup = BeautifulSoup(html, "html.parser")
+                    articles = soup.find_all("article")
+                    if not articles:
+                        break
+
+                    for card in articles:
+                        if len(jobs_scraped) >= limit:
+                            break
+
+                        title_el = card.select_one("h2 a, h3 a, [data-navigation-offer]")
+                        if not title_el:
+                            continue
+
+                        title_raw = title_el.get_text(strip=True)
+                        title = clean_job_title(title_raw)
+                        if not title:
+                            continue
+
+                        card_text = card.get_text(" ", strip=True)
+                        if is_expired_or_closed_job(title, card_text=card_text):
+                            logger.info(f"Skipping expired/closed Catho job: '{title}'")
+                            continue
+
+                        if not is_role_relevant(title, keyword):
+                            logger.info(f"Skipping non-relevant Catho job: '{title}' (Target was '{keyword}')")
+                            continue
+
+                        if exclude_senior and is_senior_title(title):
+                            logger.info(f"Skipping Senior Catho job: '{title}'")
+                            continue
+
+                        link = title_el.get("href", "")
+                        if link and not link.startswith("http"):
+                            link = "https://www.catho.com.br" + link
+                        if not link:
+                            continue
+
+                        comp_el = card.select_one("p .text-12, .company_name, [class*='company']")
+                        company = comp_el.get_text(strip=True) if comp_el else "Empresa Confidencial"
+
+                        loc_text = loc_info['clean_loc']
+                        for p_el in card.find_all("p"):
+                            p_txt = p_el.get_text(" ", strip=True)
+                            if p_el.select_one(".i_job_location") or "vaga" in p_txt.lower():
+                                if "-" in p_txt:
+                                    loc_text = p_txt.split("-")[-1].strip()
+                                    break
+
+                        salary = "N/A"
+                        for p_el in card.find_all("p"):
+                            p_txt = p_el.get_text(" ", strip=True)
+                            if p_el.select_one(".i_salary") or "r$" in p_txt.lower():
+                                salary = p_txt
+                                break
+
+                        work_mode = "Remote" if is_remote or "remoto" in card_text.lower() or "home office" in card_text.lower() else "Hybrid" if "hibrid" in card_text.lower() or "híbrid" in card_text.lower() else "On-site"
+
+                        desc = f"Vaga de {title} na empresa {company}. Localização: {loc_text}. {card_text}"
+
+                        # Fetch detail page if description is concise
+                        if len(desc) < 250 and link:
+                            try:
+                                d_page = await context.new_page()
+                                await d_page.goto(link, timeout=12000, wait_until="domcontentloaded")
+                                d_html = await d_page.content()
+                                d_soup = BeautifulSoup(d_html, "html.parser")
+                                for h_el in d_soup.find_all(["h2", "h3", "h4", "div", "section"]):
+                                    if "Sobre a vaga" in h_el.get_text():
+                                        parent = h_el.find_parent()
+                                        if parent:
+                                            desc = parent.get_text("\n", strip=True)
+                                        break
+                                await d_page.close()
+                            except Exception:
+                                pass
+
+                        jobs_scraped.append({
+                            "title": title,
+                            "company": company,
+                            "url": link,
+                            "description": desc,
+                            "location": loc_text,
+                            "work_mode": work_mode,
+                            "salary": salary
+                        })
+            except Exception as e:
+                logger.error(f"Error scraping Catho: {e}")
+            finally:
+                await browser.close()
+        return jobs_scraped
+
     async def ingest_new_jobs(self, db: AsyncSession, scraped_jobs: List[Dict], exclude_senior: bool = False):
         """Saves scraped jobs to the database immediately with on-demand ATS evaluation upon user interaction."""
         seen_batch_urls = set()
