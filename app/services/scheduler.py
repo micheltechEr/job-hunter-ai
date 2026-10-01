@@ -57,13 +57,13 @@ async def run_job_hunting_scrape(
             )
             
             # Determine platforms
-            valid_platforms = {"linkedin", "linkedin_posts", "programathor", "gupy", "indeed", "infojobs", "trabalhabrasil", "catho"}
+            valid_platforms = {"linkedin", "linkedin_posts", "programathor", "gupy", "indeed", "infojobs", "trabalhabrasil", "catho", "nerdin"}
             if platforms:
                 chosen_platforms = [p.strip().lower() for p in platforms if p and p.strip().lower() in valid_platforms]
             else:
-                chosen_platforms = ["linkedin", "linkedin_posts", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil", "catho"]
+                chosen_platforms = ["linkedin", "linkedin_posts", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil", "catho", "nerdin"]
             if not chosen_platforms:
-                chosen_platforms = ["linkedin", "linkedin_posts", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil", "catho"]
+                chosen_platforms = ["linkedin", "linkedin_posts", "gupy", "programathor", "indeed", "infojobs", "trabalhabrasil", "catho", "nerdin"]
             
             # Persist roles to profile if requested
             if save_to_profile and target_roles:
@@ -176,6 +176,16 @@ async def run_job_hunting_scrape(
                             total_ingested += len(ct_list)
                     except Exception as ct_err:
                         logger.error(f"Error scraping Catho for '{role}': {ct_err}")
+
+                # Nerdin
+                if "nerdin" in chosen_platforms:
+                    try:
+                        nd_list = await scraper_service.scrape_nerdin_jobs(keyword=role, location=target_location, limit=limit_per_platform, exclude_senior=should_exclude_senior)
+                        if nd_list:
+                            await scraper_service.ingest_new_jobs(db, nd_list, exclude_senior=should_exclude_senior)
+                            total_ingested += len(nd_list)
+                    except Exception as nd_err:
+                        logger.error(f"Error scraping Nerdin for '{role}': {nd_err}")
             
             logger.info(f"Job hunting scrape run completed. Scraped {total_ingested} job listings enqueued for background ATS.")
             return {

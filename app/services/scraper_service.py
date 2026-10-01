@@ -1447,6 +1447,140 @@ class ScraperService:
                 await browser.close()
         return jobs_scraped
 
+    # ---------------- Nerdin Scraper ----------------
+    async def scrape_nerdin_jobs(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+        """Scrapes tech jobs from Nerdin Brasil using Playwright via background proactor thread."""
+        return await _run_in_proactor_thread(self._scrape_nerdin_impl, keyword, location, limit, exclude_senior)
+
+    async def _scrape_nerdin_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+        jobs_scraped = []
+        loc_info = parse_location(location)
+        kw_clean = keyword.strip()
+        kw_encoded = urllib.parse.quote(kw_clean)
+
+        is_remote = any(w in location.lower() for w in ["remoto", "remote", "home office"]) or loc_info['is_national']
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            page = await context.new_page()
+            try:
+                max_pages = min(5, max(1, (limit // 15) + 1))
+                for page_num in range(1, max_pages + 1):
+                    if len(jobs_scraped) >= limit:
+                        break
+
+                    page_param = f"&pagina={page_num}" if page_num > 1 else ""
+
+                    if not loc_info['is_national'] and not is_remote and loc_info['city']:
+                        city_enc = urllib.parse.quote(loc_info['city'])
+                        url = f"https://www.nerdin.com.br/vagas.php?busca_vaga={kw_encoded}&busca_local={city_enc}{page_param}"
+                    elif is_remote:
+                        url = f"https://www.nerdin.com.br/vagas-home-office.php?busca_vaga={kw_encoded}{page_param}"
+                    else:
+                        url = f"https://www.nerdin.com.br/vagas.php?busca_vaga={kw_encoded}{page_param}"
+
+                    logger.info(f"Scraping Nerdin (p.{page_num}): {url} (location='{loc_info['clean_loc']}', exclude_senior={exclude_senior})")
+                    await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    html = await page.content()
+                    soup = BeautifulSoup(html, "html.parser")
+                    cards = soup.select(".vaga-card")
+                    if not cards:
+                        break
+
+                    for card in cards:
+                        if len(jobs_scraped) >= limit:
+                            break
+
+                        title_el = card.select_one(".vaga-titulo, h3, h2")
+                        link_el = card.select_one('a[href*="vaga_emprego/"], a.btn-ver-vaga')
+
+                        if not title_el or not link_el:
+                            continue
+
+                        title_raw = title_el.get_text(strip=True)
+                        title = clean_job_title(title_raw)
+                        if not title:
+                            continue
+
+                        card_text = card.get_text(" ", strip=True)
+                        if is_expired_or_closed_job(title, card_text=card_text):
+                            logger.info(f"Skipping expired/closed Nerdin job: '{title}'")
+                            continue
+
+                        if not is_role_relevant(title, keyword):
+                            logger.info(f"Skipping non-relevant Nerdin job: '{title}' (Target was '{keyword}')")
+                            continue
+
+                        if exclude_senior and is_senior_title(title):
+                            logger.info(f"Skipping Senior Nerdin job: '{title}'")
+                            continue
+
+                        link = link_el.get("href", "")
+                        if link and not link.startswith("http"):
+                            link = "https://www.nerdin.com.br/" + link.lstrip("/")
+                        if not link:
+                            continue
+
+                        company = "Empresa Confidencial"
+                        job_loc = loc_info['clean_loc']
+                        salary = "A Combinar"
+
+                        lines = [line.strip() for line in card.get_text("\n", strip=True).split("\n") if line.strip()]
+                        for l in lines:
+                            if "salário" in l.lower() or "r$" in l.lower():
+                                salary = l
+                            elif "home office" in l.lower() or "remoto" in l.lower():
+                                job_loc = "Home Office / Remoto"
+                            elif any(uf in l.upper() for uf in [" - SP", " - RJ", " - BA", " - MG", " - PR", " - SC", " - RS"]):
+                                job_loc = l
+
+                        for idx, l in enumerate(lines):
+                            if l in ["Junior • Home Office", "Pleno • Home Office", "Senior • Home Office", "Nova", "Salário a combinar"]:
+                                continue
+                            if idx > 1 and len(l) > 2 and len(l) < 40 and not l.startswith("#") and "vaga" not in l.lower():
+                                company = l
+                                break
+
+                        work_mode = "Remote" if is_remote or "home office" in card_text.lower() or "remoto" in card_text.lower() else "Hybrid" if "hibrid" in card_text.lower() or "híbrid" in card_text.lower() else "On-site"
+
+                        desc = f"Vaga de {title} na empresa {company}. Localização: {job_loc}. {card_text}"
+
+                        # Deep detail fetch if needed
+                        if len(desc) < 250 and link:
+                            try:
+                                d_page = await context.new_page()
+                                await d_page.goto(link, timeout=12000, wait_until="domcontentloaded")
+                                d_html = await d_page.content()
+                                d_soup = BeautifulSoup(d_html, "html.parser")
+                                desc_sec = d_soup.select_one(".vaga-descricao, .descricao, #descricao, .conteudo-vaga")
+                                if desc_sec:
+                                    desc = desc_sec.get_text("\n", strip=True)
+                                else:
+                                    for p_el in d_soup.find_all(["div", "section"]):
+                                        p_txt = p_el.get_text("\n", strip=True)
+                                        if "Sobre a Vaga" in p_txt or "Requisitos" in p_txt:
+                                            desc = p_txt
+                                            break
+                                await d_page.close()
+                            except Exception:
+                                pass
+
+                        jobs_scraped.append({
+                            "title": title,
+                            "company": company,
+                            "url": link,
+                            "description": desc,
+                            "location": job_loc,
+                            "work_mode": work_mode,
+                            "salary": salary
+                        })
+            except Exception as e:
+                logger.error(f"Error scraping Nerdin: {e}")
+            finally:
+                await browser.close()
+        return jobs_scraped
+
     async def ingest_new_jobs(self, db: AsyncSession, scraped_jobs: List[Dict], exclude_senior: bool = False):
         """Saves scraped jobs to the database immediately with on-demand ATS evaluation upon user interaction."""
         seen_batch_urls = set()

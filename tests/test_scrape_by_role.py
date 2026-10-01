@@ -28,6 +28,7 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
              patch("app.services.scraper_service.scraper_service.scrape_infojobs_jobs", new_callable=AsyncMock) as mock_infojobs, \
              patch("app.services.scraper_service.scraper_service.scrape_trabalhabrasil_jobs", new_callable=AsyncMock) as mock_tb, \
              patch("app.services.scraper_service.scraper_service.scrape_catho_jobs", new_callable=AsyncMock) as mock_catho, \
+             patch("app.services.scraper_service.scraper_service.scrape_nerdin_jobs", new_callable=AsyncMock) as mock_nerdin, \
              patch("app.services.scraper_service.scraper_service.ingest_new_jobs", new_callable=AsyncMock) as mock_ingest, \
              patch("app.services.scheduler.AsyncSessionLocal") as mock_session_local:
 
@@ -45,6 +46,7 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
             mock_infojobs.return_value = []
             mock_tb.return_value = []
             mock_catho.return_value = [{"title": "Python Dev Catho", "company": "Catho Corp", "url": "https://catho.com.br/vagas/1", "description": "Python dev"}]
+            mock_nerdin.return_value = [{"title": "Python Dev Nerdin", "company": "Nerdin Corp", "url": "https://nerdin.com.br/1", "description": "Python dev"}]
 
             result = await run_job_hunting_scrape(
                 roles=["Desenvolvedor Python"],
@@ -68,6 +70,7 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(mock_infojobs.call_count, 0)
             self.assertEqual(mock_tb.call_count, 0)
             self.assertEqual(mock_catho.call_count, 0)
+            self.assertEqual(mock_nerdin.call_count, 0)
             self.assertEqual(mock_ingest.call_count, 3)
 
     async def test_update_profile_roles_schema(self):
