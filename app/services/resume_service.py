@@ -416,6 +416,184 @@ def build_resume_pdf(data: dict, output_path: str):
     doc.build(story)
 
 
+def generate_ats_friendly_docx(data: Dict, output_filepath: str):
+    """
+    Generates an ATS-Safe single-column Word .docx document adhering to strict heuristics:
+    - Standard fonts (Calibri / Arial), 10-12pt.
+    - Standard section headings (RESUMO PROFISSIONAL, EXPERIÊNCIA PROFISSIONAL, HABILIDADES E TECNOLOGIAS, FORMAÇÃO, etc.).
+    - Zero tables, columns, text boxes, graphics, headers/footers.
+    - Contact info in body.
+    - Bullet points with action verbs and metrics.
+    """
+    import docx
+    from docx.shared import Pt, Inches, RGBColor
+
+    doc = docx.Document()
+
+    # Set clean single-column margins (0.75 in)
+    for sec in doc.sections:
+        sec.top_margin = Inches(0.75)
+        sec.bottom_margin = Inches(0.75)
+        sec.left_margin = Inches(0.75)
+        sec.right_margin = Inches(0.75)
+        sec.different_first_page_header_footer = False
+
+    def add_heading_styled(text: str):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(9)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.keep_with_next = True
+        run = p.add_run(text.upper())
+        run.bold = True
+        run.font.name = "Calibri"
+        run.font.size = Pt(11)
+        run.font.color.rgb = RGBColor(0x1A, 0x36, 0x5D)
+
+    # 1. Header (Name, Target Role, Contact)
+    p_name = doc.add_paragraph()
+    p_name.paragraph_format.space_before = Pt(0)
+    p_name.paragraph_format.space_after = Pt(1)
+    r_name = p_name.add_run(data.get("name", "").upper())
+    r_name.bold = True
+    r_name.font.name = "Calibri"
+    r_name.font.size = Pt(18)
+    r_name.font.color.rgb = RGBColor(0x1A, 0x20, 0x2C)
+
+    if data.get("target_role"):
+        p_role = doc.add_paragraph()
+        p_role.paragraph_format.space_after = Pt(2)
+        r_role = p_role.add_run(data["target_role"])
+        r_role.bold = True
+        r_role.font.name = "Calibri"
+        r_role.font.size = Pt(12)
+        r_role.font.color.rgb = RGBColor(0x2B, 0x6C, 0xB0)
+
+    if data.get("contact_info"):
+        p_contact = doc.add_paragraph()
+        p_contact.paragraph_format.space_after = Pt(6)
+        r_contact = p_contact.add_run(data["contact_info"])
+        r_contact.font.name = "Calibri"
+        r_contact.font.size = Pt(9.5)
+        r_contact.font.color.rgb = RGBColor(0x4A, 0x55, 0x68)
+
+    # 2. Resumo Profissional (3-4 linhas alinhadas à vaga)
+    if data.get("summary"):
+        add_heading_styled("RESUMO PROFISSIONAL")
+        p_sum = doc.add_paragraph()
+        p_sum.paragraph_format.space_after = Pt(4)
+        r_sum = p_sum.add_run(data["summary"])
+        r_sum.font.name = "Calibri"
+        r_sum.font.size = Pt(10)
+
+    # 3. Habilidades e Tecnologias
+    top_skills = data.get("top_skills", [])
+    if top_skills:
+        add_heading_styled("HABILIDADES E TECNOLOGIAS")
+        p_sk1 = doc.add_paragraph()
+        p_sk1.paragraph_format.space_after = Pt(2)
+        r_sk1_b = p_sk1.add_run("Competências Principais: ")
+        r_sk1_b.bold = True
+        r_sk1_b.font.name = "Calibri"
+        r_sk1_b.font.size = Pt(10)
+        r_sk1 = p_sk1.add_run(", ".join(top_skills))
+        r_sk1.font.name = "Calibri"
+        r_sk1.font.size = Pt(10)
+
+        if data.get("secondary_skills"):
+            p_sk2 = doc.add_paragraph()
+            p_sk2.paragraph_format.space_after = Pt(4)
+            r_sk2_b = p_sk2.add_run("Outras Tecnologias e Ferramentas: ")
+            r_sk2_b.bold = True
+            r_sk2_b.font.name = "Calibri"
+            r_sk2_b.font.size = Pt(10)
+            r_sk2 = p_sk2.add_run(", ".join(data["secondary_skills"]))
+            r_sk2.font.name = "Calibri"
+            r_sk2.font.size = Pt(10)
+
+    # 4. Experiência Profissional
+    experiences = data.get("experiences", [])
+    if experiences:
+        add_heading_styled("EXPERIÊNCIA PROFISSIONAL")
+        for exp in experiences:
+            role = exp.get("role", "")
+            company = exp.get("company", "")
+            period = exp.get("period", "")
+
+            p_exp = doc.add_paragraph()
+            p_exp.paragraph_format.space_before = Pt(4)
+            p_exp.paragraph_format.space_after = Pt(1)
+            p_exp.paragraph_format.keep_with_next = True
+
+            r_exp_t = p_exp.add_run(role)
+            r_exp_t.bold = True
+            r_exp_t.font.name = "Calibri"
+            r_exp_t.font.size = Pt(10.5)
+
+            p_comp = doc.add_paragraph()
+            p_comp.paragraph_format.space_after = Pt(2)
+            p_comp.paragraph_format.keep_with_next = True
+            r_comp = p_comp.add_run(f"{company} | {period}")
+            r_comp.italic = True
+            r_comp.font.name = "Calibri"
+            r_comp.font.size = Pt(9.5)
+            r_comp.font.color.rgb = RGBColor(0x4A, 0x55, 0x68)
+
+            for bullet in exp.get("bullets", []):
+                p_bullet = doc.add_paragraph(style='List Bullet')
+                p_bullet.paragraph_format.space_after = Pt(1)
+                r_b = p_bullet.add_run(bullet)
+                r_b.font.name = "Calibri"
+                r_b.font.size = Pt(9.5)
+
+    # 5. Projetos Relevantes
+    projects = data.get("projects", [])
+    if projects:
+        add_heading_styled("PROJETOS RELEVANTES")
+        for proj in projects:
+            p_proj = doc.add_paragraph(style='List Bullet')
+            p_proj.paragraph_format.space_after = Pt(2)
+            r_pn = p_proj.add_run(proj.get("name", "") + ": ")
+            r_pn.bold = True
+            r_pn.font.name = "Calibri"
+            r_pn.font.size = Pt(9.5)
+            r_pd = p_proj.add_run(proj.get("description", ""))
+            r_pd.font.name = "Calibri"
+            r_pd.font.size = Pt(9.5)
+            techs = proj.get("technologies", [])
+            if techs:
+                r_pt = p_proj.add_run(f" [{', '.join(techs)}]")
+                r_pt.italic = True
+                r_pt.font.name = "Calibri"
+                r_pt.font.size = Pt(9)
+                r_pt.font.color.rgb = RGBColor(0x71, 0x80, 0x96)
+
+    # 6. Formação & Idiomas
+    if data.get("education") or data.get("languages"):
+        add_heading_styled("FORMAÇÃO ACADÊMICA & IDIOMAS")
+        if data.get("education"):
+            p_ed = doc.add_paragraph()
+            p_ed.paragraph_format.space_after = Pt(2)
+            r_ed_b = p_ed.add_run("Formação: ")
+            r_ed_b.bold = True
+            r_ed_b.font.name = "Calibri"
+            r_ed_b.font.size = Pt(9.5)
+            r_ed = p_ed.add_run(data["education"])
+            r_ed.font.name = "Calibri"
+            r_ed.font.size = Pt(9.5)
+        if data.get("languages"):
+            p_lang = doc.add_paragraph()
+            p_lang.paragraph_format.space_after = Pt(2)
+            r_lg_b = p_lang.add_run("Idiomas: ")
+            r_lg_b.bold = True
+            r_lg_b.font.name = "Calibri"
+            r_lg_b.font.size = Pt(9.5)
+            r_lg = p_lang.add_run(", ".join(data["languages"]))
+            r_lg.font.name = "Calibri"
+            r_lg.font.size = Pt(9.5)
+
+    doc.save(output_filepath)
+
+
 async def generate_tailored_resume_data(
     user_profile: UserProfile,
     job: Job,
@@ -430,14 +608,36 @@ async def generate_tailored_resume_data(
     )
 
     system_prompt = (
-        "Você é um especialista sênior em ATS (Applicant Tracking System), recrutamento e copywriting técnico de conversão (metodologia Copy-Thief).\n"
-        "Seu papel é reescrever e adaptar o currículo do candidato para maximizar o alinhamento com a vaga alvo.\n"
-        "DIRETRIZES DE OURO:\n"
-        "1. VERACIDADE ESTRITA: Use APENAS tecnologias, empresas, cargos e fatos reais do perfil do candidato. NUNCA invente empregos ou qualificações inexistentes.\n"
-        "2. FOCO ESTRATÉGICO & COPY-THIEF: Destaque em primeiro lugar as experiências, projetos e tecnologias mais alinhadas com a vaga. Inicie bullet points com verbos de ação fortes (Desenvolveu, Implementou, Otimizou, Reduziu, Automatizou, Escalou) e quantifique métricas/impacto onde aplicável.\n"
-        "3. LINGUAGEM DE IMPACTO & ZERO SLOP: Elimine clichês corporativos vazios ('apaixonado por', 'busco oportunidade', 'proativo'). Foque em entregas técnicas, arquitetura e redução de trabalho manual.\n"
-        "4. IDIOMA: Mantenha em Português do Brasil de alto padrão corporativo (ou termos técnicos universais).\n"
-        f"{seniority_rule}\n"
+        "Você é um especialista sênior em ATS (Applicant Tracking System), recrutamento técnico e copywriting de conversão (Copy-Thief).\n"
+        "Seu papel é reescrever e adaptar o currículo do candidato com máxima aderência aos critérios da vaga alvo seguindo 5 HEURÍSTICAS OBRIGATÓRIAS:\n"
+        "\n"
+        "1. ANÁLISE DA VAGA (Executar primeiro mentalmente):\n"
+        "   - Extraia o título exato do cargo e nível para `target_role`.\n"
+        "   - Isole os Must-Haves (requisitos obrigatórios) dos Nice-to-Haves (diferenciais).\n"
+        "   - Mapeie as keywords e frases exatas da vaga (hard skills, ferramentas, metodologias, siglas + nomes por extenso).\n"
+        "   - Identifique a linguagem preferida da empresa (tom técnico, formalidade, termos do segmento).\n"
+        "\n"
+        "2. INVENTÁRIO DO CANDIDATO (Zero Invenção):\n"
+        "   - Mapeie as experiências, projetos e tecnologias reais do candidato.\n"
+        "   - Calcule a aderência de cada item aos Must-Haves da vaga alvo.\n"
+        "   - Priorize e dê maior destaque àquilo que melhor atende à vaga X.\n"
+        "\n"
+        "3. REESCRITA ORIENTADA A ATS + IMPACTO:\n"
+        "   - Veracidade estrita: 100% de fatos reais do candidato (apenas reframe estratégico e ênfase).\n"
+        "   - Terminologia exata: Use as palavras-chave exatas da vaga sempre que o candidato possuir tal competência real.\n"
+        "   - Bullets de Alto Impacto: Cada bullet DEVE seguir rigorosamente a fórmula: [Verbo de ação forte no passado] + [o que foi feito tecnicamente] + [resultado/impacto quantificado (%, tempo economizado, escala, volume, usuários, etc.)].\n"
+        "   - Resumo Profissional: 3 a 4 linhas no campo `summary`, direto, de alta conversão, alinhado ao título e às dores centrais da vaga.\n"
+        "   - Seção de Skills (`top_skills`): Hard skills exigidas pela vaga que o candidato possui em primeiro lugar, seguidas das secundárias. Use termo exato + sigla por extenso quando pertinente (ex: 'CI/CD (Integração Contínua)', 'API RESTful').\n"
+        "   - Ordem das Experiências: As experiências mais relevantes para a vaga X devem vir primeiro (em ordem cronológica inversa dentro desse critério).\n"
+        "\n"
+        "4. DIRETRIZES DE FORMATAÇÃO E ESTRUTURA ATS:\n"
+        "   - Layout Single-Column conceitual (compatível com parsers de texto left-to-right, top-to-bottom).\n"
+        "   - Sem jargões vazios ou clichês corporativos ('apaixonado por tecnologia', 'proativo', 'busco oportunidade').\n"
+        f"   {seniority_rule}\n"
+        "\n"
+        "5. VALIDAÇÃO FINAL:\n"
+        "   - Densidade orgânica e natural de palavras-chave (sem keyword stuffing).\n"
+        "   - Nunca inventar empresas, datas, cargos ou tecnologias que não existam no perfil fornecido.\n"
     )
 
     exps_text = "\n".join([
@@ -634,7 +834,16 @@ async def tailor_and_save_resume_for_job(db: AsyncSession, job_id: int, include_
     filename = f"Curriculo_{safe_title}_{job_id}.pdf"
     file_path = os.path.join(settings.UPLOAD_DIR, f"{version_name}_{filename}")
 
+    # Build ATS-friendly single-column PDF
     build_resume_pdf(tailored_dict, file_path)
+
+    # Build ATS-friendly single-column Word .docx
+    docx_file_path = file_path.replace(".pdf", ".docx")
+    try:
+        generate_ats_friendly_docx(tailored_dict, docx_file_path)
+        logger.info(f"Generated ATS-friendly DOCX at {docx_file_path}")
+    except Exception as docx_err:
+        logger.warning(f"Could not generate ATS DOCX: {docx_err}")
 
     # 7. Read hash
     with open(file_path, "rb") as f:

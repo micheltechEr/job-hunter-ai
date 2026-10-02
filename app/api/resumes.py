@@ -167,6 +167,36 @@ async def get_resume_file(resume_id: int, db: AsyncSession = Depends(get_db)):
     )
 
 
+@router.get("/{resume_id}/docx")
+async def get_resume_docx(resume_id: int, db: AsyncSession = Depends(get_db)):
+    """Serves the ATS-Safe Word .docx resume file for download."""
+    result = await db.execute(select(Resume).where(Resume.id == resume_id))
+    resume = result.scalars().first()
+    if not resume or not resume.file_path:
+        raise HTTPException(status_code=404, detail="Currículo não encontrado.")
+
+    docx_path = resume.file_path.replace(".pdf", ".docx")
+    if not os.path.exists(docx_path):
+        from app.services.resume_service import generate_ats_friendly_docx
+        if resume.parsed_data:
+            try:
+                generate_ats_friendly_docx(resume.parsed_data, docx_path)
+            except Exception as e:
+                logger.error(f"Error generating on-demand DOCX: {e}")
+                raise HTTPException(status_code=500, detail="Falha ao gerar arquivo DOCX.")
+        else:
+            raise HTTPException(status_code=404, detail="Arquivo .docx não encontrado e sem dados estruturados.")
+
+    docx_filename = resume.filename.replace(".pdf", ".docx")
+    return FileResponse(
+        docx_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{docx_filename}"'
+        }
+    )
+
+
 @router.get("/{resume_id}/preview")
 async def get_resume_preview(resume_id: int, db: AsyncSession = Depends(get_db)):
     """Returns structured metadata and file URL for rendering rich CV preview."""
@@ -180,6 +210,7 @@ async def get_resume_preview(resume_id: int, db: AsyncSession = Depends(get_db))
         "filename": resume.filename,
         "version_name": resume.version_name,
         "file_url": f"/api/resumes/{resume.id}/file",
+        "docx_url": f"/api/resumes/{resume.id}/docx",
         "parsed_data": resume.parsed_data or {},
         "created_at": resume.created_at
     }

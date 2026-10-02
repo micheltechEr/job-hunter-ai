@@ -432,5 +432,47 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any("Java" in r for r in res.missing_requirements))
             self.assertTrue(any("Java" in r for r in res.risks))
 
+    def test_generate_ats_friendly_docx(self):
+        import os
+        import tempfile
+        from app.services.resume_service import generate_ats_friendly_docx
+
+        test_data = {
+            "name": "Candidato Teste",
+            "target_role": "Desenvolvedor Backend Júnior",
+            "contact_info": "teste@email.com | (75) 99999-9999 | Salvador, BA",
+            "summary": "Desenvolvedor especializado em Python e APIs de alta escala.",
+            "top_skills": ["Python", "FastAPI", "PostgreSQL"],
+            "secondary_skills": ["Docker", "Git"],
+            "experiences": [
+                {
+                    "role": "Desenvolvedor Backend",
+                    "company": "Empresa A",
+                    "period": "Jan 2023 - Presente",
+                    "bullets": ["Desenvolveu microsserviços reduzindo latência em 25%."]
+                }
+            ],
+            "projects": [
+                {
+                    "name": "Projeto Alpha",
+                    "description": "Sistema de automação.",
+                    "technologies": ["Python", "Docker"]
+                }
+            ],
+            "education": "Ciência da Computação",
+            "languages": ["Português (Nativo)"]
+        }
+
+        with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tf:
+            temp_path = tf.name
+
+        try:
+            generate_ats_friendly_docx(test_data, temp_path)
+            self.assertTrue(os.path.exists(temp_path))
+            self.assertGreater(os.path.getsize(temp_path), 5000)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
 if __name__ == "__main__":
     unittest.main()

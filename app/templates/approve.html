@@ -1304,8 +1304,11 @@
             document.getElementById('modal-resume-badge').innerText = (version || 'ATS').toUpperCase();
 
             const fileUrl = `/api/resumes/${resumeId}/file`;
+            const docxUrl = `/api/resumes/${resumeId}/docx`;
             document.getElementById('resume-preview-iframe').src = fileUrl;
             document.getElementById('modal-resume-download').href = fileUrl;
+            const docxBtn = document.getElementById('modal-resume-download-docx');
+            if (docxBtn) docxBtn.href = docxUrl;
 
             loadResumeStructure(resumeId);
             switchResumeTab('pdf');
@@ -1503,6 +1506,9 @@
                 <div class="flex items-center space-x-2">
                     <a id="modal-resume-download" href="#" target="_blank" download class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded transition flex items-center space-x-1 shadow-xs">
                         <span>⬇️ Baixar PDF</span>
+                    </a>
+                    <a id="modal-resume-download-docx" href="#" target="_blank" download class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded transition flex items-center space-x-1 shadow-xs" title="Baixar formato Word .docx otimizado para ATS">
+                        <span>📝 Baixar DOCX</span>
                     </a>
                     <button onclick="closeResumePreviewModal()" class="text-gray-400 hover:text-gray-600 font-bold text-2xl px-2 py-0.5 rounded hover:bg-gray-200 transition leading-none">
                         &times;

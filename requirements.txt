@@ -20,3 +20,4 @@ playwright
 apscheduler
 beautifulsoup4
 reportlab
+python-docx
