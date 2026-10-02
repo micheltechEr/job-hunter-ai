@@ -474,5 +474,86 @@ class TestATSAndSearch(unittest.IsolatedAsyncioTestCase):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
+    def test_synthetic_experience_mode_rules(self):
+        from app.models.db_models import UserProfile, Experience, Project
+        from app.schemas.schemas import TailoredResumeSchema, TailoredExperience, TailoredProject
+        from app.services.resume_service import apply_deterministic_hallucination_guard
+
+        user = UserProfile(
+            id=1,
+            name="Dev Candidato",
+            education="Sistemas de Informação",
+            languages=["Português"],
+            experiences=[
+                Experience(company="Empresa Real A", role="Desenvolvedor Python", start_date="2022", end_date="2023")
+            ],
+            projects=[
+                Project(name="Projeto Real P1", description="Sistema de notas", technologies=["Python"])
+            ]
+        )
+
+        # 1. When allow_synthetic_experience=False: unverified project & fake company MUST be blocked
+        obj_off = TailoredResumeSchema(
+            name="Dev Candidato",
+            target_role="Desenvolvedor",
+            contact_info="email@test.com",
+            summary="Resumo",
+            top_skills=["Python"],
+            secondary_skills=[],
+            experiences=[
+                TailoredExperience(company="Empresa Real A", role="Dev Python", period="2022 - 2023", highlights=[], technologies=[]),
+                TailoredExperience(company="Fake Corp Inc", role="Arquiteto", period="2023 - 2024", highlights=[], technologies=[])
+            ],
+            projects=[
+                TailoredProject(name="Projeto Real P1", description="desc", technologies=[]),
+                TailoredProject(name="Projeto Sintético Desconhecido", description="desc", technologies=[])
+            ]
+        )
+
+        guarded_off = apply_deterministic_hallucination_guard(obj_off, user, allow_synthetic_experience=False)
+        self.assertEqual(len(guarded_off.experiences), 1)
+        self.assertEqual(guarded_off.experiences[0].company, "Empresa Real A")
+        self.assertEqual(len(guarded_off.projects), 1)
+        self.assertEqual(guarded_off.projects[0].name, "Projeto Real P1")
+
+        # 2. When allow_synthetic_experience=True:
+        # - Formal experiences STILL block fake companies (no corporate deception).
+        # - In projects: max 2 practical/freelance projects are allowed, labeled properly.
+        # - Corporate impersonation in projects (Ltda, S.A.) is rejected.
+        obj_on = TailoredResumeSchema(
+            name="Dev Candidato",
+            target_role="Desenvolvedor",
+            contact_info="email@test.com",
+            summary="Resumo",
+            top_skills=["Python"],
+            secondary_skills=[],
+            experiences=[
+                TailoredExperience(company="Empresa Real A", role="Dev Python", period="2022 - 2023", highlights=[], technologies=[]),
+                TailoredExperience(company="Outra Empresa Fictícia", role="Dev", period="2023 - 2024", highlights=[], technologies=[])
+            ],
+            projects=[
+                TailoredProject(name="Projeto Real P1", description="desc real", technologies=[]),
+                TailoredProject(name="Freelance Automação Web", description="Freelance prático para e-commerce", technologies=["Playwright"]),
+                TailoredProject(name="Microsserviço de Pagamentos", description="Projeto prático pessoal", technologies=["FastAPI"]),
+                TailoredProject(name="Projeto Extra 3", description="Tentativa de 3º projeto", technologies=[]),
+                TailoredProject(name="Soluções Corporativas Ltda", description="Tentativa de mascarar empresa em projeto", technologies=[])
+            ]
+        )
+
+        guarded_on = apply_deterministic_hallucination_guard(obj_on, user, allow_synthetic_experience=True)
+        # Experiences must strictly have only 1 (the real one)
+        self.assertEqual(len(guarded_on.experiences), 1)
+        self.assertEqual(guarded_on.experiences[0].company, "Empresa Real A")
+
+        # Projects must have 1 real + exactly 2 synthetic = 3 projects total (excess & corporate fake dropped)
+        self.assertEqual(len(guarded_on.projects), 3)
+        proj_names = [p.name for p in guarded_on.projects]
+        self.assertIn("Projeto Real P1", proj_names)
+        self.assertTrue(any("Freelance" in pn for pn in proj_names))
+        self.assertTrue(any("Projeto Prático" in pn for pn in proj_names))
+        # Ensure Ltda and 3rd extra were not included
+        self.assertFalse(any("Ltda" in pn for pn in proj_names))
+        self.assertFalse(any("Projeto Extra 3" in pn for pn in proj_names))
+
 if __name__ == "__main__":
     unittest.main()

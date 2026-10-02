@@ -221,12 +221,19 @@ async def tailor_resume_endpoint(
     job_id: int,
     payload: Optional[TailorResumeRequest] = None,
     include_seniority: bool = Query(False, description="Se true, mantém sufixos de senioridade nos cargos"),
+    allow_synthetic_experience: bool = Query(False, description="Se true, permite sintetizar 1-2 projetos práticos/freelance para cobrir lacunas da vaga"),
     db: AsyncSession = Depends(get_db)
 ):
-    """Creates an AI-adapted, ATS-optimized PDF resume tailored specifically for the target job."""
+    """Creates an AI-adapted, ATS-optimized PDF and DOCX resume tailored specifically for the target job."""
     try:
         inc_sen = payload.include_seniority if payload is not None else include_seniority
-        resume = await tailor_and_save_resume_for_job(db, job_id, include_seniority=inc_sen)
+        allow_synth = payload.allow_synthetic_experience if payload is not None else allow_synthetic_experience
+        resume = await tailor_and_save_resume_for_job(
+            db,
+            job_id,
+            include_seniority=inc_sen,
+            allow_synthetic_experience=allow_synth
+        )
         return resume
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))

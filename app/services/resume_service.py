@@ -598,13 +598,29 @@ async def generate_tailored_resume_data(
     user_profile: UserProfile,
     job: Job,
     job_analysis: JobAnalysis,
-    include_seniority: bool = False
+    include_seniority: bool = False,
+    allow_synthetic_experience: bool = False
 ) -> TailoredResumeSchema:
     """Uses LLM to strategically adapt user's authentic profile to target job criteria applying Copy-Thief principles."""
     seniority_rule = (
         "5. SENIORIDADE: Mantenha as designações de nível originais quando aplicável."
         if include_seniority else
         "5. SENIORIDADE: O candidato optou por NÃO exibir sufixos/prefixos de senioridade (Jr, Júnior, Pleno, Sênior, Sr, II, III). No campo `target_role` e nos cargos de cada experiência `role`, NUNCA inclua esses sufixos. Use títulos limpos e universais como 'Desenvolvedor Full Stack', 'Engenheiro de Software', 'Desenvolvedor Backend'."
+    )
+
+    synthetic_rule = (
+        "6. EXPERIÊNCIAS SINTETIZADAS (MODO ATIVADO):\n"
+        "   - allow_synthetic_experience está ATIVADO pelo usuário para cobrir lacunas técnicas da vaga.\n"
+        "   - LIMITE: No MÁXIMO 1 ou 2 itens no total.\n"
+        "   - NUNCA invente empresas reais, cargos formais, datas de emprego ou vínculos corporativos CLT/PJ. Modele EXCLUSIVAMENTE como freelance autônomo ou projeto prático pessoal, sem explicitar empresas inexistentes.\n"
+        "   - SEÇÃO OBRIGATÓRIA: Crie esses itens no array `projects` (Projetos Relevantes / Experiência Prática). NUNCA coloque em `experiences` (que deve conter apenas experiências formais reais).\n"
+        "   - IDENTIFICAÇÃO CLARA: O nome do projeto DEVE conter identificador explícito (ex: 'Projeto Prático: Sistema [Foco]' ou 'Desenvolvimento Freelance: Automação [Domínio]').\n"
+        "   - RESULTADOS: Use métricas e resultados hipotéticos plausíveis, realistas e sem exagero.\n"
+        "   - PREFERÊNCIA AO REAL: Se o candidato já possui qualquer base real no perfil (mesmo que inicial), prefira expandir a base real antes de criar itens sintéticos."
+        if allow_synthetic_experience else
+        "6. ZERO ITENS SINTÉTICOS (MODO PADRÃO DESATIVADO):\n"
+        "   - allow_synthetic_experience está DESATIVADO.\n"
+        "   - É TERMINANTEMENTE PROIBIDO criar qualquer experiência, projeto ou empresa não presente no perfil real do candidato. Todo e qualquer item deve ser 100% autêntico e comprovável."
     )
 
     system_prompt = (
@@ -634,10 +650,11 @@ async def generate_tailored_resume_data(
         "   - Layout Single-Column conceitual (compatível com parsers de texto left-to-right, top-to-bottom).\n"
         "   - Sem jargões vazios ou clichês corporativos ('apaixonado por tecnologia', 'proativo', 'busco oportunidade').\n"
         f"   {seniority_rule}\n"
+        f"   {synthetic_rule}\n"
         "\n"
         "5. VALIDAÇÃO FINAL:\n"
         "   - Densidade orgânica e natural de palavras-chave (sem keyword stuffing).\n"
-        "   - Nunca inventar empresas, datas, cargos ou tecnologias que não existam no perfil fornecido.\n"
+        "   - Nunca inventar empresas reais, vínculos CLT/PJ corporativos ou datas fraudulentas.\n"
     )
 
     exps_text = "\n".join([
@@ -686,24 +703,34 @@ Gere o currículo personalizado e adaptado em conformidade com o schema.
         response_schema=TailoredResumeSchema
     )
     
-    # Apply Hard Gate: Programmatic Whitelist Guard (Zero Hallucination Guarantee + Seniority Sanitization)
-    guarded_obj = apply_deterministic_hallucination_guard(tailored_obj, user_profile, include_seniority=include_seniority)
+    # Apply Hard Gate: Programmatic Whitelist Guard (Zero Hallucination Guarantee + Seniority Sanitization + Controlled Synthetic Mode)
+    guarded_obj = apply_deterministic_hallucination_guard(
+        tailored_obj,
+        user_profile,
+        include_seniority=include_seniority,
+        allow_synthetic_experience=allow_synthetic_experience
+    )
     return guarded_obj
 
 
 def apply_deterministic_hallucination_guard(
     tailored_obj: TailoredResumeSchema,
     user_profile: UserProfile,
-    include_seniority: bool = False
+    include_seniority: bool = False,
+    allow_synthetic_experience: bool = False
 ) -> TailoredResumeSchema:
     """
     Hard Gate / Epistemic Filter: Ensures 100% verifiability of tailored resumes.
     1. Programmatically drops any experience that does not match an authentic company in user_profile.experiences.
-    2. Programmatically drops any project not matching user_profile.projects.
+       (Never allows fake companies or formal jobs, even if allow_synthetic_experience=True).
+    2. Projects validation:
+       - When allow_synthetic_experience=False: strictly keeps only authentic projects matching user_profile.projects.
+       - When allow_synthetic_experience=True: allows up to 2 practical/freelance projects under `projects` (never in `experiences`),
+         provided they do not fake corporate entities.
     3. Guarantees canonical user info, canonical dates and fallback safety.
     4. Programmatically strips seniority qualifiers from role titles when include_seniority is False.
     """
-    # 1. Company Whitelist Filter
+    # 1. Company Whitelist Filter - ALWAYS strictly enforced on formal experiences
     valid_experiences = []
     auth_exps = user_profile.experiences or []
 
@@ -745,24 +772,49 @@ def apply_deterministic_hallucination_guard(
 
     tailored_obj.experiences = valid_experiences
 
-    # 2. Seniority sanitization on main target role
+    # Seniority sanitization on target role
     if not include_seniority and tailored_obj.target_role:
         tailored_obj.target_role = strip_seniority(tailored_obj.target_role)
 
-    # 2. Project Whitelist Filter
+    # 2. Project Whitelist & Synthetic Filter
     auth_projs = user_profile.projects or []
-    if auth_projs:
-        valid_projects = []
-        auth_proj_names = [(p.name or "").strip().lower() for p in auth_projs]
-        for gen_proj in tailored_obj.projects:
-            gen_pname = (gen_proj.name or "").strip().lower()
-            if any(ap in gen_pname or gen_pname in ap for ap in auth_proj_names if ap):
-                valid_projects.append(gen_proj)
+    auth_proj_names = [(p.name or "").strip().lower() for p in auth_projs]
+
+    valid_projects = []
+    synthetic_count = 0
+    forbidden_corporate = ["s.a.", "s/a", "ltda", "inc", "corp", "corporation", "banco", "enterprise", "consultoria s/a"]
+
+    for gen_proj in tailored_obj.projects:
+        gen_pname = (gen_proj.name or "").strip()
+        gen_pname_lower = gen_pname.lower()
+
+        # Check authentic match against user profile
+        is_authentic = any(ap in gen_pname_lower or gen_pname_lower in ap for ap in auth_proj_names if ap)
+        if is_authentic:
+            valid_projects.append(gen_proj)
+            continue
+
+        # If synthetic experience mode is enabled
+        if allow_synthetic_experience:
+            if synthetic_count < 2:
+                # Check that it doesn't fake a real formal corporation
+                has_corporate_suffix = any(fc in gen_pname_lower or fc in (gen_proj.description or "").lower() for fc in forbidden_corporate)
+                if not has_corporate_suffix:
+                    # Ensure clear labeling as practical project or freelance
+                    if not any(tag in gen_pname_lower for tag in ["projeto prático", "projeto aplicado", "prático", "aplicado", "freelance", "estudo de caso", "laboratório", "open-source"]):
+                        gen_proj.name = f"Projeto Prático: {gen_pname}"
+                    valid_projects.append(gen_proj)
+                    synthetic_count += 1
+                    logger.info(f"Allowed synthetic practical project ({synthetic_count}/2): '{gen_proj.name}'")
+                    continue
+                else:
+                    logger.warning(f"Deterministic Guard BLOCKED synthetic project mimicking corporate entity: '{gen_pname}'")
             else:
-                logger.warning(f"Deterministic Guard BLOCKED unverified project: '{gen_proj.name}'")
-        tailored_obj.projects = valid_projects
-    else:
-        tailored_obj.projects = []
+                logger.warning(f"Deterministic Guard BLOCKED excess synthetic project beyond limit of 2: '{gen_pname}'")
+        else:
+            logger.warning(f"Deterministic Guard BLOCKED unverified project (synthetic mode off): '{gen_proj.name}'")
+
+    tailored_obj.projects = valid_projects
 
     # 3. Canonical metadata enforcement
     tailored_obj.name = user_profile.name
@@ -774,7 +826,12 @@ def apply_deterministic_hallucination_guard(
     return tailored_obj
 
 
-async def tailor_and_save_resume_for_job(db: AsyncSession, job_id: int, include_seniority: bool = False) -> Resume:
+async def tailor_and_save_resume_for_job(
+    db: AsyncSession,
+    job_id: int,
+    include_seniority: bool = False,
+    allow_synthetic_experience: bool = False
+) -> Resume:
     """Adapts candidate CV to a specific job, evaluates copy quality via Copy-Thief, generates ATS PDF, persists it and attaches to application."""
     # 1. Fetch Job with relations
     res_job = await db.execute(
@@ -819,8 +876,14 @@ async def tailor_and_save_resume_for_job(db: AsyncSession, job_id: int, include_
     else:
         job_analysis = job.analysis
 
-    # 4. Generate structured tailored content via LLM with Copy-Thief guidelines and Seniority toggle
-    tailored_data = await generate_tailored_resume_data(user_prof, job, job_analysis, include_seniority=include_seniority)
+    # 4. Generate structured tailored content via LLM with Copy-Thief guidelines, Seniority toggle and Synthetic toggle
+    tailored_data = await generate_tailored_resume_data(
+        user_prof,
+        job,
+        job_analysis,
+        include_seniority=include_seniority,
+        allow_synthetic_experience=allow_synthetic_experience
+    )
     tailored_dict = tailored_data.model_dump() if hasattr(tailored_data, "model_dump") else tailored_data.dict()
 
     # 5. Evaluate copy quality using Copy-Thief

@@ -80,6 +80,7 @@ class CopyThiefReport(BaseModel):
 
 class TailorResumeRequest(BaseModel):
     include_seniority: bool = Field(default=False, description="Se False, remove sufixos/prefixos de senioridade (Jr, Pleno, Sr) dos cargos e títulos.")
+    allow_synthetic_experience: bool = Field(default=False, description="Se True, permite sintetizar até 1-2 projetos aplicados/freelance para cobrir lacunas técnicas da vaga.")
 
 
 # ----------------- API Request / Response Schemas -----------------

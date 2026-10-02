@@ -388,10 +388,16 @@
                         <div class="pt-2 flex flex-col gap-2 border-t border-indigo-200/60">
                             <div class="flex items-center justify-between">
                                 <span class="text-[11px] text-gray-600 font-medium">Adaptação com IA (Copy-Thief):</span>
-                                <label class="flex items-center gap-1.5 cursor-pointer text-xs select-none">
-                                    <input type="checkbox" id="tailor-include-seniority" class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
-                                    <span class="text-[11px] text-gray-600">Incluir Senioridade</span>
-                                </label>
+                                <div class="flex items-center space-x-3">
+                                    <label class="flex items-center gap-1.5 cursor-pointer text-xs select-none">
+                                        <input type="checkbox" id="tailor-include-seniority" class="rounded text-indigo-600 focus:ring-indigo-500 text-xs">
+                                        <span class="text-[11px] text-gray-600">Senioridade</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 cursor-pointer text-xs select-none" title="Permite sintetizar até 1-2 projetos práticos/freelance para cobrir gaps técnicos (sem vínculos corporativos falsos)">
+                                        <input type="checkbox" id="tailor-allow-synthetic" class="rounded text-amber-600 focus:ring-amber-500 text-xs">
+                                        <span class="text-[11px] text-amber-700 font-medium">Sintetizar Prática</span>
+                                    </label>
+                                </div>
                             </div>
                             <button id="btn-tailor-cv" type="button" onclick="tailorCvForCurrentJob()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded shadow-xs transition flex items-center justify-center space-x-1">
                                 <span id="btn-tailor-cv-text">✨ Gerar e Adaptar CV (Copy-Thief)</span>
@@ -1446,6 +1452,7 @@
             }
 
             const incSeniority = document.getElementById('tailor-include-seniority')?.checked || false;
+            const allowSynthetic = document.getElementById('tailor-allow-synthetic')?.checked || false;
             const btn = document.getElementById('btn-tailor-cv');
             const txt = document.getElementById('btn-tailor-cv-text');
             const origText = txt.innerText;
@@ -1453,10 +1460,13 @@
             txt.innerText = "Adaptando com Copy-Thief...";
 
             try {
-                const res = await fetch(`/api/jobs/${currentActiveJobId}/tailor-resume?include_seniority=${incSeniority}`, {
+                const res = await fetch(`/api/jobs/${currentActiveJobId}/tailor-resume?include_seniority=${incSeniority}&allow_synthetic_experience=${allowSynthetic}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ include_seniority: incSeniority })
+                    body: JSON.stringify({
+                        include_seniority: incSeniority,
+                        allow_synthetic_experience: allowSynthetic
+                    })
                 });
                 if (!res.ok) {
                     const err = await res.json();
