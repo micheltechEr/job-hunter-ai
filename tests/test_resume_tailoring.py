@@ -153,6 +153,47 @@ class TestResumeTailoring(unittest.IsolatedAsyncioTestCase):
         # When include_seniority=False (default), seniority "Jr" must be stripped from role
         self.assertEqual(guarded.experiences[0].role, "Dev Full Stack")
 
+    def test_deterministic_guard_preserves_synthesized_practical_projects(self):
+        from app.services.resume_service import apply_deterministic_hallucination_guard
+        from app.models.db_models import Experience
+
+        user_profile = UserProfile(
+            name="Ângelo Miguel",
+            experiences=[Experience(company="Varejo Hub", role="Dev Full Stack", start_date="04/2024", end_date="Presente")],
+            projects=[]  # User had no formal projects registered
+        )
+
+        synthesized_schema = TailoredResumeSchema(
+            name="Ângelo Miguel",
+            target_role="Data Engineer",
+            summary="Engenheiro de dados focado em ETL e pipelines analíticos.",
+            top_skills=["Python", "SQL", "Airflow", "BigQuery"],
+            secondary_skills=["Docker", "FastAPI"],
+            experiences=[
+                TailoredExperience(
+                    company="Varejo Hub",
+                    role="Dev Full Stack",
+                    period="2024 - Presente",
+                    highlights=["Construiu integrações de banco de dados."],
+                    technologies=["Python", "SQL"]
+                )
+            ],
+            projects=[
+                TailoredProject(
+                    name="Pipeline Analítico ETL BigQuery",
+                    description="Implementação de pipeline assíncrono para processamento de telemetria e geração de insights com Python e SQL.",
+                    technologies=["Python", "SQL", "BigQuery", "Docker"],
+                    url="https://github.com/exemplo/etl-pipeline"
+                )
+            ]
+        )
+
+        guarded = apply_deterministic_hallucination_guard(synthesized_schema, user_profile)
+        # Synthesized practical project MUST be preserved and highlighted
+        self.assertEqual(len(guarded.projects), 1)
+        self.assertEqual(guarded.projects[0].name, "Pipeline Analítico ETL BigQuery")
+        self.assertIn("BigQuery", guarded.projects[0].technologies)
+
     def test_strip_seniority_utility(self):
         from app.services.resume_service import strip_seniority
         self.assertEqual(strip_seniority("Desenvolvedor Full Stack Jr"), "Desenvolvedor Full Stack")

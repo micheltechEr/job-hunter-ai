@@ -433,10 +433,11 @@ async def generate_tailored_resume_data(
         "Você é um especialista sênior em ATS (Applicant Tracking System), recrutamento e copywriting técnico de conversão (metodologia Copy-Thief).\n"
         "Seu papel é reescrever e adaptar o currículo do candidato para maximizar o alinhamento com a vaga alvo.\n"
         "DIRETRIZES DE OURO:\n"
-        "1. VERACIDADE ESTRITA: Use APENAS tecnologias, empresas, cargos e fatos reais do perfil do candidato. NUNCA invente empregos ou qualificações inexistentes.\n"
-        "2. FOCO ESTRATÉGICO & COPY-THIEF: Destaque em primeiro lugar as experiências, projetos e tecnologias mais alinhadas com a vaga. Inicie bullet points com verbos de ação fortes (Desenvolveu, Implementou, Otimizou, Reduziu, Automatizou, Escalou) e quantifique métricas/impacto onde aplicável.\n"
-        "3. LINGUAGEM DE IMPACTO & ZERO SLOP: Elimine clichês corporativos vazios ('apaixonado por', 'busco oportunidade', 'proativo'). Foque em entregas técnicas, arquitetura e redução de trabalho manual.\n"
-        "4. IDIOMA: Mantenha em Português do Brasil de alto padrão corporativo (ou termos técnicos universais).\n"
+        "1. VERACIDADE ESTRITA EM EMPRESAS: Mantenha estritamente as empresas reais do histórico do candidato. NUNCA invente empresas onde o candidato não trabalhou.\n"
+        "2. SÍNTESE DE EXPERIÊNCIA PRÁTICA & PROJETOS APLICADOS: Se a vaga exigir tecnologias, ferramentas, bancos de dados, cloud ou diferenciais que não estejam amplamente detalhados nas empresas anteriores, SINTETIZE e gere no campo `projects` projetos práticos e implementações técnicas aplicadas que demonstrem o domínio prático do candidato sobre os requisitos da vaga (ex: pipelines de dados, microsserviços, dashboards analíticos, integrações de APIs, testes automatizados, automações com IA).\n"
+        "3. FOCO ESTRATÉGICO & COPY-THIEF: Destaque em primeiro lugar as experiências, projetos e tecnologias mais alinhadas com a vaga. Inicie bullet points com verbos de ação fortes (Desenvolveu, Implementou, Otimizou, Reduziu, Automatizou, Escalou) e quantifique métricas/impacto onde aplicável.\n"
+        "4. LINGUAGEM DE IMPACTO & ZERO SLOP: Elimine clichês corporativos vazios ('apaixonado por', 'busco oportunidade', 'proativo'). Foque em entregas técnicas, arquitetura e redução de trabalho manual.\n"
+        "5. IDIOMA: Mantenha em Português do Brasil de alto padrão corporativo (ou termos técnicos universais).\n"
         f"{seniority_rule}\n"
     )
 
@@ -549,20 +550,37 @@ def apply_deterministic_hallucination_guard(
     if not include_seniority and tailored_obj.target_role:
         tailored_obj.target_role = strip_seniority(tailored_obj.target_role)
 
-    # 2. Project Whitelist Filter
+    # 2. Practical Experience & Projects Processing (Preserves synthesized practical implementations)
+    valid_projects = []
     auth_projs = user_profile.projects or []
-    if auth_projs:
-        valid_projects = []
-        auth_proj_names = [(p.name or "").strip().lower() for p in auth_projs]
-        for gen_proj in tailored_obj.projects:
-            gen_pname = (gen_proj.name or "").strip().lower()
-            if any(ap in gen_pname or gen_pname in ap for ap in auth_proj_names if ap):
-                valid_projects.append(gen_proj)
-            else:
-                logger.warning(f"Deterministic Guard BLOCKED unverified project: '{gen_proj.name}'")
-        tailored_obj.projects = valid_projects
-    else:
-        tailored_obj.projects = []
+
+    for gen_proj in (tailored_obj.projects or []):
+        if not gen_proj or not gen_proj.name:
+            continue
+
+        p_name = gen_proj.name.strip()
+        if not include_seniority:
+            p_name = strip_seniority(p_name)
+        gen_proj.name = p_name
+
+        if not gen_proj.description or len(gen_proj.description.strip()) < 10:
+            gen_proj.description = f"Implementação técnica e desenvolvimento prático com foco em {', '.join(gen_proj.technologies[:4]) if gen_proj.technologies else 'arquitetura e software'}."
+
+        valid_projects.append(gen_proj)
+
+    # Fallback to authentic profile projects if LLM did not generate any
+    if not valid_projects and auth_projs:
+        for ap in auth_projs:
+            valid_projects.append(
+                TailoredProject(
+                    name=ap.name if include_seniority else strip_seniority(ap.name),
+                    description=ap.description or "Projeto técnico desenvolvido com foco em boas práticas e arquitetura.",
+                    technologies=ap.technologies or [],
+                    url=ap.url
+                )
+            )
+
+    tailored_obj.projects = valid_projects
 
     # 3. Canonical metadata enforcement
     tailored_obj.name = user_profile.name
