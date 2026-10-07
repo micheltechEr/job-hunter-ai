@@ -1581,6 +1581,106 @@ class ScraperService:
                 await browser.close()
         return jobs_scraped
 
+    # ---------------- Glassdoor Scraper ----------------
+    async def scrape_glassdoor_jobs(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+        """Scrapes jobs from Glassdoor Brasil using Playwright via background proactor thread."""
+        return await _run_in_proactor_thread(self._scrape_glassdoor_impl, keyword, location, limit, exclude_senior)
+
+    async def _scrape_glassdoor_impl(self, keyword: str, location: str = "Brasil", limit: int = 5, exclude_senior: bool = False) -> List[Dict]:
+        jobs_scraped = []
+        loc_clean = location.strip() if location and location.strip() else "Brasil"
+        loc_lower = loc_clean.lower()
+        
+        kw_encoded = urllib.parse.quote(keyword)
+        if loc_lower in ("brasil", "brazil", "todo brasil", "nacional", "remoto", "remote", "home office"):
+            url = f"https://www.glassdoor.com.br/Job/jobs.htm?sc.keyword={kw_encoded}&locT=N&locId=36&locKeyword=Brasil"
+        else:
+            loc_encoded = urllib.parse.quote(loc_clean)
+            url = f"https://www.glassdoor.com.br/Job/jobs.htm?sc.keyword={kw_encoded}&locT=C&locKeyword={loc_encoded}"
+
+        logger.info(f"Scraping Glassdoor ({loc_clean}): {url} (exclude_senior={exclude_senior})")
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                locale="pt-BR",
+                extra_http_headers={"Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"}
+            )
+            page = await context.new_page()
+            try:
+                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                await page.wait_for_timeout(2500)
+
+                # Scroll to load listings
+                scroll_count = min(12, max(2, (limit // 4) + 1))
+                for _ in range(scroll_count):
+                    await page.mouse.wheel(0, 1000)
+                    await asyncio.sleep(0.7)
+
+                html = await page.content()
+                soup = BeautifulSoup(html, "html.parser")
+                cards = soup.select("li[data-test='jobListing'], .jobCard, li[class*='JobsList']")
+                if not cards:
+                    cards = soup.select("div[class*='JobCard'], [data-test='job-title']")
+
+                logger.info(f"Found {len(cards)} Glassdoor job cards")
+
+                for card in cards:
+                    if len(jobs_scraped) >= limit:
+                        break
+
+                    title_el = card.select_one("[data-test='job-title'], a[class*='JobTitle'], a[id*='job-title'], h2, a")
+                    company_el = card.select_one("[data-test='employer-short-name'], [class*='EmployerName'], span[class*='EmployerName']")
+                    loc_el = card.select_one("[data-test='emp-location'], [class*='Location'], [class*='location']")
+                    salary_el = card.select_one("[data-test='detailSalary'], [class*='SalaryEstimate'], [class*='salary']")
+                    snippet_el = card.select_one("[class*='jobDescriptionSnippet'], [class*='Snippet'], [data-test='job-snippet']")
+
+                    if not title_el:
+                        continue
+
+                    raw_title = title_el.get_text(strip=True)
+                    title = clean_job_title(raw_title)
+
+                    if not title or not is_role_relevant(title, keyword):
+                        continue
+
+                    if exclude_senior and is_senior_title(title):
+                        logger.info(f"Skipping Senior Glassdoor job: '{title}'")
+                        continue
+
+                    company = company_el.get_text(strip=True) if company_el else "Empresa Confidencial"
+                    job_loc = loc_el.get_text(strip=True) if loc_el else loc_clean
+                    salary = salary_el.get_text(strip=True) if salary_el else "N/A"
+                    snippet = snippet_el.get_text(" ", strip=True) if snippet_el else ""
+
+                    href = title_el.get("href", "")
+                    if href and not href.startswith("http"):
+                        link = f"https://www.glassdoor.com.br{href}"
+                    else:
+                        link = href or url
+
+                    desc = f"Vaga de {title} na empresa {company}. Localização: {job_loc}. {snippet}".strip()
+                    work_mode = "Remote" if ("remoto" in job_loc.lower() or "remote" in job_loc.lower() or "remoto" in desc.lower()) else ("Hybrid" if ("híbrid" in job_loc.lower() or "hibrid" in job_loc.lower() or "híbrid" in desc.lower()) else "On-site")
+
+                    if not is_location_matching(job_loc, location, work_mode, desc):
+                        continue
+
+                    jobs_scraped.append({
+                        "title": title,
+                        "company": company,
+                        "url": link,
+                        "description": desc,
+                        "location": job_loc,
+                        "work_mode": work_mode,
+                        "salary": salary
+                    })
+            except Exception as e:
+                logger.error(f"Error scraping Glassdoor: {e}")
+            finally:
+                await browser.close()
+        return jobs_scraped
+
     async def ingest_new_jobs(self, db: AsyncSession, scraped_jobs: List[Dict], exclude_senior: bool = False):
         """Saves scraped jobs to the database immediately with on-demand ATS evaluation upon user interaction."""
         seen_batch_urls = set()

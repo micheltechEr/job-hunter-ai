@@ -29,6 +29,7 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
              patch("app.services.scraper_service.scraper_service.scrape_trabalhabrasil_jobs", new_callable=AsyncMock) as mock_tb, \
              patch("app.services.scraper_service.scraper_service.scrape_catho_jobs", new_callable=AsyncMock) as mock_catho, \
              patch("app.services.scraper_service.scraper_service.scrape_nerdin_jobs", new_callable=AsyncMock) as mock_nerdin, \
+             patch("app.services.scraper_service.scraper_service.scrape_glassdoor_jobs", new_callable=AsyncMock) as mock_glassdoor, \
              patch("app.services.scraper_service.scraper_service.ingest_new_jobs", new_callable=AsyncMock) as mock_ingest, \
              patch("app.services.scheduler.AsyncSessionLocal") as mock_session_local:
 
@@ -47,31 +48,33 @@ class TestScrapeByRole(unittest.IsolatedAsyncioTestCase):
             mock_tb.return_value = []
             mock_catho.return_value = [{"title": "Python Dev Catho", "company": "Catho Corp", "url": "https://catho.com.br/vagas/1", "description": "Python dev"}]
             mock_nerdin.return_value = [{"title": "Python Dev Nerdin", "company": "Nerdin Corp", "url": "https://nerdin.com.br/1", "description": "Python dev"}]
+            mock_glassdoor.return_value = [{"title": "Python Dev Glassdoor", "company": "Glassdoor Corp", "url": "https://glassdoor.com.br/1", "description": "Python dev"}]
 
             result = await run_job_hunting_scrape(
                 roles=["Desenvolvedor Python"],
                 location="Remoto",
-                platforms=["linkedin", "linkedin_posts", "indeed"],
+                platforms=["linkedin", "linkedin_posts", "indeed", "glassdoor"],
                 limit_per_platform=2,
                 save_to_profile=False
             )
 
             self.assertEqual(result["roles"], ["Desenvolvedor Python"])
             self.assertEqual(result["location"], "Remoto")
-            self.assertEqual(result["platforms"], ["linkedin", "linkedin_posts", "indeed"])
+            self.assertEqual(result["platforms"], ["linkedin", "linkedin_posts", "indeed", "glassdoor"])
             self.assertEqual(mock_li.call_args[1]["location"], "Remoto")
             self.assertEqual(mock_li_posts.call_args[1]["location"], "Remoto")
             self.assertEqual(mock_indeed.call_args[1]["location"], "Remoto")
+            self.assertEqual(mock_glassdoor.call_args[1]["location"], "Remoto")
             self.assertEqual(mock_li.call_count, 1)
             self.assertEqual(mock_li_posts.call_count, 1)
             self.assertEqual(mock_indeed.call_count, 1)
+            self.assertEqual(mock_glassdoor.call_count, 1)
             self.assertEqual(mock_gp.call_count, 0)
             self.assertEqual(mock_pt.call_count, 0)
             self.assertEqual(mock_infojobs.call_count, 0)
             self.assertEqual(mock_tb.call_count, 0)
-            self.assertEqual(mock_catho.call_count, 0)
+            self.assertEqual(mock_ingest.call_count, 4)
             self.assertEqual(mock_nerdin.call_count, 0)
-            self.assertEqual(mock_ingest.call_count, 3)
 
     async def test_update_profile_roles_schema(self):
         req = UpdateProfileRolesRequest(
