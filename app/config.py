@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     # LLM Settings
     LLM_API_KEY: str = Field(default="")
     LLM_BASE_URL: str = Field(default="https://api.openai.com/v1")
-    LLM_MODEL: str = Field(default="gpt-4o-mini")
+    LLM_MODEL: str = Field(default="antigravity/gemini-3.8-flash-tiered")
+    LLM_FALLBACK_MODELS: str = Field(default="antigravity/gemini-3.8-flash-tiered,antigravity/gemini-3-flash,gpt-4o-mini")
+    LLM_TIMEOUT: float = Field(default=35.0)
     LLM_MAX_CONCURRENT_REQUESTS: int = Field(default=8)
     LLM_REQUESTS_PER_MINUTE: int = Field(default=300)
     LLM_MAX_RETRIES: int = Field(default=5)

@@ -76,6 +76,11 @@ async def execute_with_llm_protection(
         try:
             return await func(*args, **kwargs)
         except (openai.RateLimitError, openai.APIConnectionError, openai.APITimeoutError, openai.InternalServerError) as e:
+            err_msg = str(e).lower()
+            if "model_cooldown" in err_msg or "cooling down" in err_msg:
+                logger.warning(f"Immediate model cooldown detected ({e}). Raising for fast model fallback.")
+                raise e
+
             if attempt == max_retries:
                 logger.error(f"LLM call failed after {max_retries} attempts due to: {e}")
                 raise e
